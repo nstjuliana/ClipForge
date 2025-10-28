@@ -19,7 +19,6 @@ The core flow: **Launch → Project Selection → Media Acquisition → Timeline
 - App loads and initializes Electron backend
 - System permissions are checked in the background
 - **MVP**: Direct to Project Selection screen
-- **Post-MVP**: Show Welcome screen on first launch, then route to appropriate screen
 
 ### 1.2 Error States
 - App fails to launch → Display error message with diagnostic info
@@ -46,9 +45,7 @@ The core flow: **Launch → Project Selection → Media Acquisition → Timeline
 
 ### 3.1 Happy Path
 - Display welcome screen on first launch
-- Show app overview, key features, or tutorial options
-- User clicks "Get Started" or "Skip" → Route to Project Selection
-- Option to "Don't show again" → Save preference
+- User clicks "New Project" or "Open Project" Route to Project Selection
 
 ### 3.2 Error States
 - None (graceful degradation if welcome screen fails)
