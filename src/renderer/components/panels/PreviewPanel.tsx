@@ -7,7 +7,7 @@
  * @component
  */
 
-import { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useTimeline } from '@/contexts/TimelineContext';
 import { useMedia } from '@/contexts/MediaContext';
 import { formatDuration } from '@/services/metadataService';
@@ -30,17 +30,38 @@ export interface PreviewPanelProps {
  */
 export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
   const { timeline, setPlayhead, setPlaying } = useTimeline();
   const { clips: mediaClips } = useMedia();
   const [isLoading, setIsLoading] = useState(false);
   const [currentTimelineClipId, setCurrentTimelineClipId] = useState<string | null>(null);
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  // Mutable ref for smooth progress bar updates (updated every frame)
+  const playheadRef = useRef(timeline.playhead);
   
   /**
    * Get the clip at the current playhead position
    * Returns the clip from the topmost track (lowest track index)
    */
+  /**
+   * Keep playheadRef in sync with timeline.playhead for external changes (scrubbing, jumping)
+   * Also update progress bar DOM when playhead changes externally (when not playing)
+   */
+  useEffect(() => {
+    playheadRef.current = timeline.playhead;
+    
+    // Update progress bar DOM directly when playhead changes externally (not during playback)
+    // During playback, the playback loop handles DOM updates
+    if (!timeline.isPlaying && progressBarRef.current && timeline.duration > 0) {
+      const progressBar = progressBarRef.current.querySelector('.bg-blue-600') as HTMLElement;
+      if (progressBar) {
+        const percentage = (timeline.playhead / timeline.duration) * 100;
+        progressBar.style.width = `${percentage}%`;
+      }
+    }
+  }, [timeline.playhead, timeline.isPlaying, timeline.duration]);
+
   const getCurrentClip = useCallback(() => {
     const playhead = timeline.playhead;
     
@@ -113,13 +134,14 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   /**
    * Update video source when clip changes
    * Tracks timelineClip.id to ensure reload when switching clips (even same file, different trim)
+   * Always revokes previous blob URL to prevent memory leaks
    */
   useEffect(() => {
     const current = getCurrentClip();
     
     if (!current) {
-      // Clean up old blob URL if we created it
-      if (videoBlobUrl && currentTimelineClipId) {
+      // Clean up old blob URL immediately
+      if (videoBlobUrl) {
         URL.revokeObjectURL(videoBlobUrl);
       }
       setVideoBlobUrl(null);
@@ -131,6 +153,11 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     
     // Trigger reload if we're showing a *different timeline clip*
     if (timelineClip.id !== currentTimelineClipId) {
+      // Revoke previous blob URL immediately on clip change
+      if (videoBlobUrl) {
+        URL.revokeObjectURL(videoBlobUrl);
+      }
+      
       setIsLoading(true);
       setCurrentTimelineClipId(timelineClip.id);
       
@@ -144,11 +171,6 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
             setVideoBlobUrl(null);
             setIsLoading(false);
             return;
-          }
-          
-          // Revoke previous blob
-          if (videoBlobUrl) {
-            URL.revokeObjectURL(videoBlobUrl);
           }
           
           // Convert buffer to Blob and create URL
@@ -168,15 +190,15 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   }, [getCurrentClip, currentTimelineClipId, videoBlobUrl]);
   
   /**
-   * Cleanup blob URL on unmount (only if we created it)
+   * Cleanup blob URL on unmount - always revoke to prevent memory leaks
    */
   useEffect(() => {
     return () => {
-      if (videoBlobUrl && currentTimelineClipId) {
+      if (videoBlobUrl) {
         URL.revokeObjectURL(videoBlobUrl);
       }
     };
-  }, [videoBlobUrl, currentTimelineClipId]);
+  }, [videoBlobUrl]);
   
   /**
    * Sync video currentTime with playhead
@@ -309,20 +331,34 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   }, [timeline.playhead, setPlayhead]);
   
   /**
-   * Update playhead during playback
+   * Cleaner playback loop - stops at end, jumps to next clip instantly
    */
   useEffect(() => {
     const video = videoRef.current;
-    if (!timeline.isPlaying) return;
+    if (!timeline.isPlaying) {
+      // Cancel animation frame if we're not playing
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      return;
+    }
     
     let lastUpdateTime = performance.now();
     
     const updatePlayhead = () => {
+      // Check if still playing (might have been paused/stopped)
+      if (!timeline.isPlaying) {
+        animationFrameRef.current = null;
+        return;
+      }
+      
       const now = performance.now();
       const deltaTime = (now - lastUpdateTime) / 1000; // Convert to seconds
       lastUpdateTime = now;
       
       const current = getCurrentClip();
+      let newPosition: number;
       
       if (current && video && video.readyState >= 2) {
         // We're in a clip - sync with video playback
@@ -330,48 +366,80 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         
         // Check if we've reached the end of the clip
         if (video.currentTime >= current.timelineClip.outPoint) {
-          // Move to next clip or blank area (don't pause, just move forward)
-          const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+          const clipEndTime = current.timelineClip.startTime + current.timelineClip.duration;
           
-          if (nextPlayhead >= timeline.duration) {
-            // End of timeline - pause here
-            setPlayhead(timeline.duration);
+          // Jump to next clip instantly
+          const nextClip = getNextClip(clipEndTime);
+          
+          if (nextClip) {
+            // Jump directly to next clip start
+            newPosition = nextClip.timelineClip.startTime;
+          } else if (clipEndTime >= timeline.duration) {
+            // End of timeline - stop
+            newPosition = timeline.duration;
+            setPlayhead(newPosition);
+            playheadRef.current = newPosition;
+            updateProgressBarWidth(newPosition);
             setPlaying(false);
+            animationFrameRef.current = null;
             return;
+          } else {
+            // No next clip, move to end of current clip
+            newPosition = clipEndTime;
           }
-          
-          setPlayhead(nextPlayhead);
         } else {
-          setPlayhead(timelinePosition);
+          // Still within clip - sync with video
+          newPosition = timelinePosition;
         }
       } else {
-        // We're in a blank area or video not ready - advance playhead forward
-        const nextClip = getNextClip(timeline.playhead);
-        const maxTime = timeline.duration;
-        const newPlayhead = timeline.playhead + deltaTime;
+        // Blank area - advance through blank space
+        const nextClip = getNextClip(playheadRef.current);
+        newPosition = playheadRef.current + deltaTime;
         
         if (nextClip) {
-          // There's a next clip - advance until we reach it
-          if (newPlayhead >= nextClip.timelineClip.startTime) {
-            // We've reached the next clip
-            setPlayhead(nextClip.timelineClip.startTime);
-            // The effect that syncs video will load the new clip
-          } else {
-            // Still in blank area, continue advancing
-            setPlayhead(Math.min(newPlayhead, nextClip.timelineClip.startTime));
+          // There's a next clip - jump to it if we've reached it
+          if (newPosition >= nextClip.timelineClip.startTime) {
+            newPosition = nextClip.timelineClip.startTime;
           }
-        } else if (newPlayhead >= maxTime) {
-          // Reached end of timeline
-          setPlayhead(maxTime);
+        } else if (newPosition >= timeline.duration) {
+          // Reached end of timeline - stop
+          newPosition = timeline.duration;
+          setPlayhead(newPosition);
+          playheadRef.current = newPosition;
+          updateProgressBarWidth(newPosition);
           setPlaying(false);
+          animationFrameRef.current = null;
           return;
         } else {
-          // No next clip, advance to end
-          setPlayhead(Math.min(newPlayhead, maxTime));
+          // Clamp to timeline duration
+          newPosition = Math.min(newPosition, timeline.duration);
         }
       }
       
+      // Update ref every frame for smooth progress bar
+      playheadRef.current = newPosition;
+      
+      // Directly update DOM for frame-accurate progress bar (bypasses React re-renders)
+      updateProgressBarWidth(newPosition);
+      
+      // Throttle React state updates to ~30-60 updates/sec (only update if change > 0.016s)
+      // This reduces re-renders while keeping progress bar smooth via ref and direct DOM updates
+      if (Math.abs(newPosition - timeline.playhead) > 0.016) {
+        setPlayhead(newPosition);
+      }
+      
       animationFrameRef.current = requestAnimationFrame(updatePlayhead);
+    };
+    
+    // Helper to directly update progress bar width (for smooth frame-by-frame updates)
+    const updateProgressBarWidth = (position: number) => {
+      if (progressBarRef.current && timeline.duration > 0) {
+        const progressBar = progressBarRef.current.querySelector('.bg-blue-600') as HTMLElement;
+        if (progressBar) {
+          const percentage = (position / timeline.duration) * 100;
+          progressBar.style.width = `${percentage}%`;
+        }
+      }
     };
     
     animationFrameRef.current = requestAnimationFrame(updatePlayhead);
@@ -379,6 +447,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
     };
   }, [timeline.isPlaying, timeline.playhead, timeline.duration, getCurrentClip, getNextClip, setPlayhead, setPlaying]);
@@ -412,22 +481,51 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   
   /**
    * Handle video ended
-   * Force a playhead jump and let the system re-evaluate getCurrentClip()
+   * Jump to next clip instantly or stop at end
    */
   const handleVideoEnded = useCallback(() => {
+    if (!timeline.isPlaying) return;
+    
     const current = getCurrentClip();
-    if (!current || !timeline.isPlaying) return;
+    const clipEndTime = current ? current.timelineClip.startTime + current.timelineClip.duration : timeline.playhead;
     
-    const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+    // Check for next clip instantly
+    const nextClip = getNextClip(clipEndTime);
     
-    // This will trigger getCurrentClip() to return new clip
-    setPlayhead(nextPlayhead);
-    
-    // Optional: if nextPlayhead exceeds duration, stop
-    if (nextPlayhead >= timeline.duration) {
+    if (nextClip) {
+      // Jump directly to next clip start
+      setPlayhead(nextClip.timelineClip.startTime);
+    } else if (clipEndTime >= timeline.duration) {
+      // End of timeline - stop
+      setPlayhead(timeline.duration);
       setPlaying(false);
+    } else {
+      // No next clip, move to end of current clip
+      setPlayhead(clipEndTime);
     }
-  }, [getCurrentClip, timeline.isPlaying, timeline.duration, setPlayhead, setPlaying]);
+  }, [getCurrentClip, getNextClip, timeline.isPlaying, timeline.duration, timeline.playhead, setPlayhead, setPlaying]);
+
+  /**
+   * Handle scrubbing on progress bar
+   */
+  const handleProgressBarClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!progressBarRef.current || timeline.duration <= 0) return;
+    
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const percent = (e.clientX - rect.left) / rect.width;
+    const newPlayhead = Math.max(0, Math.min(timeline.duration, percent * timeline.duration));
+    
+    // Update both ref and state
+    playheadRef.current = newPlayhead;
+    setPlayhead(newPlayhead);
+    
+    // Update progress bar visually
+    const progressBar = progressBarRef.current.querySelector('.bg-blue-600') as HTMLElement;
+    if (progressBar) {
+      const percentage = (newPlayhead / timeline.duration) * 100;
+      progressBar.style.width = `${percentage}%`;
+    }
+  }, [timeline.duration, setPlayhead]);
   
   return (
     <div className={`flex flex-col h-full bg-black ${className}`}>
@@ -531,12 +629,17 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
               <span>{formatDuration(timeline.duration)}</span>
             </div>
             
-            {/* Progress Bar */}
-            <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden cursor-pointer">
+            {/* Progress Bar - Click to scrub */}
+            <div 
+              ref={progressBarRef}
+              className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden cursor-pointer"
+              onClick={handleProgressBarClick}
+              title="Click to jump to position"
+            >
               <div
-                className="h-full bg-blue-600 transition-all"
+                className="h-full bg-blue-600"
                 style={{
-                  width: timeline.duration > 0 ? `${(timeline.playhead / timeline.duration) * 100}%` : '0%'
+                  width: timeline.duration > 0 ? `${(playheadRef.current / timeline.duration) * 100}%` : '0%'
                 }}
               />
             </div>
