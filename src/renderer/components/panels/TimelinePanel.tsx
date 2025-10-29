@@ -137,14 +137,24 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [timeline.zoom, setPlayhead]);
   
   /**
+   * Find nearest track index from Y position and snap to it
+   */
+  const snapToTrack = useCallback((y: number): number => {
+    const trackY = y - RULER_HEIGHT - TRACK_PADDING;
+    const trackIndex = Math.round(trackY / (TRACK_HEIGHT + TRACK_PADDING));
+    const clampedTrackIndex = Math.max(0, Math.min(trackIndex, NUM_TRACKS - 1));
+    return RULER_HEIGHT + TRACK_PADDING + clampedTrackIndex * (TRACK_HEIGHT + TRACK_PADDING);
+  }, [RULER_HEIGHT, TRACK_PADDING, TRACK_HEIGHT, NUM_TRACKS]);
+
+  /**
    * Handle clip drag - also detect track changes
    */
   const handleClipDragEnd = useCallback((clipId: string, newX: number, newY: number) => {
     const newStartTime = Math.max(0, (newX - TIMELINE_PADDING) / timeline.zoom);
     
-    // Calculate which track the clip was dropped on
+    // Calculate which track the clip was dropped on (Y should already be snapped)
     const trackY = newY - RULER_HEIGHT - TRACK_PADDING;
-    const newTrackIndex = Math.floor(trackY / (TRACK_HEIGHT + TRACK_PADDING));
+    const newTrackIndex = Math.round(trackY / (TRACK_HEIGHT + TRACK_PADDING));
     const clampedTrackIndex = Math.max(0, Math.min(newTrackIndex, NUM_TRACKS - 1));
     
     // Get the current clip to check if track changed
@@ -263,7 +273,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
           draggable
           dragBoundFunc={(pos: { x: number; y: number }) => ({
             x: Math.max(TIMELINE_PADDING, pos.x),
-            y: Math.max(RULER_HEIGHT + TRACK_PADDING, pos.y),
+            y: snapToTrack(pos.y), // Snap Y position to nearest track
           })}
           onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
             // Only fire when the GROUP (not a handle) is dragged
