@@ -31,9 +31,10 @@ export interface TimelinePanelProps {
  */
 export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const timelineCanvasRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 200 });
-  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack } = useTimeline();
+  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack, setSelectedClips, removeTimelineClip } = useTimeline();
   const { clips: mediaClips } = useMedia();
   
   // Check if playhead is over a clip
@@ -68,6 +69,100 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     
     return () => window.removeEventListener('resize', updateDimensions);
   }, [NUM_TRACKS, TRACK_HEIGHT, TRACK_PADDING, RULER_HEIGHT]);
+
+  /**
+   * Handle keyboard events for clip manipulation
+   */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only process if timeline canvas is focused
+      if (document.activeElement !== timelineCanvasRef.current) {
+        return;
+      }
+
+      // Don't process if focus is in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      // No selected clips, nothing to do
+      if (timeline.selectedClips.length === 0) {
+        return;
+      }
+
+      // Delete key: remove selected clips
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        timeline.selectedClips.forEach(clipId => {
+          removeTimelineClip(clipId);
+        });
+        return;
+      }
+
+      // Arrow keys for nudging or track movement
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      const frameDuration = 1 / 30; // Assume 30fps (1 frame = 1/30 seconds)
+
+      // Left/Right arrows: nudge clips horizontally
+      if (e.key === 'ArrowLeft' && !isCtrlOrCmd) {
+        e.preventDefault();
+        const nudgeAmount = -frameDuration;
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (clip) {
+            const newStartTime = Math.max(0, clip.startTime + nudgeAmount);
+            updateTimelineClip(clipId, { startTime: newStartTime });
+          }
+        });
+        return;
+      }
+
+      if (e.key === 'ArrowRight' && !isCtrlOrCmd) {
+        e.preventDefault();
+        const nudgeAmount = frameDuration;
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (clip) {
+            updateTimelineClip(clipId, { startTime: clip.startTime + nudgeAmount });
+          }
+        });
+        return;
+      }
+
+      // Ctrl/Cmd + Up/Down: move clips between tracks
+      if (e.key === 'ArrowUp' && isCtrlOrCmd) {
+        e.preventDefault();
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (clip && clip.track > 0) {
+            moveClipToTrack(clipId, clip.track - 1);
+          }
+        });
+        return;
+      }
+
+      if (e.key === 'ArrowDown' && isCtrlOrCmd) {
+        e.preventDefault();
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (clip && clip.track < NUM_TRACKS - 1) {
+            moveClipToTrack(clipId, clip.track + 1);
+          }
+        });
+        return;
+      }
+    };
+
+    if (timelineCanvasRef.current) {
+      timelineCanvasRef.current.addEventListener('keydown', handleKeyDown);
+      return () => {
+        if (timelineCanvasRef.current) {
+          timelineCanvasRef.current.removeEventListener('keydown', handleKeyDown);
+        }
+      };
+    }
+  }, [timeline.selectedClips, timeline.clips, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS]);
   
   /**
    * Handle split clip button click
@@ -120,11 +215,23 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [timeline.scrollPosition, setScrollPosition, handleZoomIn, handleZoomOut]);
   
   /**
-   * Handle stage click to set playhead
+   * Handle stage click to set playhead and clear selection
    */
   const handleStageClick = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
     if (!stage) return;
+    
+    // If clicking on the stage background (not a clip), clear selection
+    // Note: Clip clicks should have prevented bubbling with cancelBubble
+    const targetType = e.target.getType();
+    const parent = e.target.getParent();
+    const isBackground = e.target === stage || 
+                         targetType === 'Line' || 
+                         (targetType === 'Rect' && (parent === stage || parent === stage.findOne('Layer')));
+    
+    if (isBackground) {
+      setSelectedClips([]);
+    }
     
     const pointerPos = stage.getPointerPosition();
     if (!pointerPos) return;
@@ -134,7 +241,45 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     const time = Math.max(0, x / timeline.zoom);
     
     setPlayhead(time);
-  }, [timeline.zoom, setPlayhead]);
+  }, [timeline.zoom, setPlayhead, setSelectedClips]);
+
+  /**
+   * Handle clip click for selection
+   */
+  const handleClipClick = useCallback((e: Konva.KonvaEventObject<MouseEvent>, clipId: string) => {
+    // Prevent event from bubbling to stage
+    e.cancelBubble = true;
+    
+    // Don't select if clicking on trim handles
+    const target = e.target;
+    if (target.getType() === 'Rect') {
+      const attrs = target.getAttrs();
+      // Trim handles are white rectangles at the edges
+      if (attrs.fill === '#FFF' && attrs.opacity === 0.8) {
+        return;
+      }
+    }
+    
+    const isMultiSelect = e.evt.ctrlKey || e.evt.metaKey;
+    
+    if (isMultiSelect) {
+      // Toggle clip in selection
+      const isSelected = timeline.selectedClips.includes(clipId);
+      if (isSelected) {
+        setSelectedClips(timeline.selectedClips.filter(id => id !== clipId));
+      } else {
+        setSelectedClips([...timeline.selectedClips, clipId]);
+      }
+    } else {
+      // Replace selection with single clip
+      setSelectedClips([clipId]);
+    }
+    
+    // Focus container for keyboard input
+    if (timelineCanvasRef.current) {
+      timelineCanvasRef.current.focus();
+    }
+  }, [timeline.selectedClips, setSelectedClips]);
   
   /**
    * Find nearest track index from Y position and snap to it
@@ -331,6 +476,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
       const groupX = TIMELINE_PADDING + timelineClip.startTime * timeline.zoom;
       const groupY = RULER_HEIGHT + TRACK_PADDING + timelineClip.track * (TRACK_HEIGHT + TRACK_PADDING);
       const width = timelineClip.duration * timeline.zoom;
+      const isSelected = timeline.selectedClips.includes(timelineClip.id);
   
       return (
         <Group
@@ -338,6 +484,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
           x={groupX}
           y={groupY}
           draggable
+          onClick={(e: Konva.KonvaEventObject<MouseEvent>) => handleClipClick(e, timelineClip.id)}
           dragBoundFunc={(pos: { x: number; y: number }) => {
             const snappedY = snapToTrack(pos.y);
             const clipWidth = timelineClip.duration * timeline.zoom;
@@ -362,8 +509,8 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
             width={width}
             height={TRACK_HEIGHT}
             fill="#4A90E2"
-            stroke="#2E5C8A"
-            strokeWidth={2}
+            stroke={isSelected ? "#FFD700" : "#2E5C8A"}
+            strokeWidth={isSelected ? 3 : 2}
             cornerRadius={4}
           />
   
@@ -543,8 +690,16 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
       
       {/* Timeline Canvas */}
       <div 
-        className="flex-1 overflow-auto bg-gray-900"
+        ref={timelineCanvasRef}
+        className="flex-1 overflow-auto bg-gray-900 focus:outline-none"
+        tabIndex={0}
         onWheel={handleWheel}
+        onClick={() => {
+          // Focus container when clicking on timeline
+          if (timelineCanvasRef.current) {
+            timelineCanvasRef.current.focus();
+          }
+        }}
       >
         <Stage
           ref={stageRef}
