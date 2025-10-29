@@ -43,15 +43,33 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   const getCurrentClip = useCallback(() => {
     const playhead = timeline.playhead;
     
+    console.log('=== getCurrentClip Debug ===');
+    console.log('Playhead:', playhead);
+    console.log('Timeline clips count:', timeline.clips.length);
+    console.log('Timeline clips:', timeline.clips.map(tc => ({
+      id: tc.id,
+      clipId: tc.clipId,
+      startTime: tc.startTime,
+      duration: tc.duration,
+      endTime: tc.startTime + tc.duration
+    })));
+    console.log('Media clips count:', mediaClips.length);
+    
     // Find clip at playhead position
-    const timelineClip = timeline.clips.find(
-      tc => playhead >= tc.startTime && playhead < tc.startTime + tc.duration
-    );
+    const timelineClip = timeline.clips.find(tc => {
+      const isInRange = playhead >= tc.startTime && playhead < tc.startTime + tc.duration;
+      console.log(`Checking clip ${tc.id}: start=${tc.startTime}, end=${tc.startTime + tc.duration}, playhead=${playhead}, inRange=${isInRange}`);
+      return isInRange;
+    });
+    
+    console.log('Found timeline clip:', timelineClip);
     
     if (!timelineClip) return null;
     
     // Get source clip
     const clip = mediaClips.find(c => c.id === timelineClip.clipId);
+    console.log('Found source clip:', clip);
+    
     if (!clip) return null;
     
     return { clip, timelineClip };
@@ -82,11 +100,11 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     const current = getCurrentClip();
     
     if (!current) {
-      // Clean up old blob URL
-      if (videoBlobUrl) {
+      // Clean up old blob URL if we created it
+      if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
         URL.revokeObjectURL(videoBlobUrl);
-        setVideoBlobUrl(null);
       }
+      setVideoBlobUrl(null);
       setCurrentClipPath(null);
       return;
     }
@@ -95,44 +113,51 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       setIsLoading(true);
       setCurrentClipPath(current.clip.filePath);
       
-      // Request video buffer via IPC and create blob URL
-      window.electron.getVideoBlobUrl(current.clip.filePath)
-        .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
-          if (!result.success || !result.buffer) {
-            console.error('Failed to load video:', result.error);
+      // Check if filePath is already a blob URL or data URL
+      if (current.clip.filePath.startsWith('blob:') || current.clip.filePath.startsWith('data:')) {
+        // Already a blob URL or data URL, use it directly
+        setVideoBlobUrl(current.clip.filePath);
+        setIsLoading(false);
+      } else {
+        // File path - need to load via IPC
+        window.electron.getVideoBlobUrl(current.clip.filePath)
+          .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
+            if (!result.success || !result.buffer) {
+              console.error('Failed to load video:', result.error);
+              setIsLoading(false);
+              return;
+            }
+            
+            // Clean up old blob URL if we created it
+            if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
+              URL.revokeObjectURL(videoBlobUrl);
+            }
+            
+            // Convert buffer to Blob and create URL
+            const blob = new Blob([result.buffer], { type: 'video/mp4' });
+            const url = URL.createObjectURL(blob);
+            
+            setVideoBlobUrl(url);
             setIsLoading(false);
-            return;
-          }
-          
-          // Clean up old blob URL
-          if (videoBlobUrl) {
-            URL.revokeObjectURL(videoBlobUrl);
-          }
-          
-          // Convert buffer to Blob and create URL
-          const blob = new Blob([result.buffer], { type: 'video/mp4' });
-          const url = URL.createObjectURL(blob);
-          
-          setVideoBlobUrl(url);
-          setIsLoading(false);
-        })
-        .catch((err: unknown) => {
-          console.error('Failed to load video:', err);
-          setIsLoading(false);
-        });
+          })
+          .catch((err: unknown) => {
+            console.error('Failed to load video:', err);
+            setIsLoading(false);
+          });
+      }
     }
   }, [getCurrentClip, currentClipPath, videoBlobUrl]);
   
   /**
-   * Cleanup blob URL on unmount
+   * Cleanup blob URL on unmount (only if we created it)
    */
   useEffect(() => {
     return () => {
-      if (videoBlobUrl) {
+      if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
         URL.revokeObjectURL(videoBlobUrl);
       }
     };
-  }, [videoBlobUrl]);
+  }, [videoBlobUrl, currentClipPath]);
   
   /**
    * Sync video currentTime with playhead
@@ -207,6 +232,36 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       setPlaying(true);
     }
   }, [timeline.isPlaying, timeline.playhead, timeline.duration, getCurrentClip, setPlaying, setPlayhead]);
+  
+  /**
+   * Jump to start of timeline
+   */
+  const handleJumpToStart = useCallback(() => {
+    setPlayhead(0);
+  }, [setPlayhead]);
+  
+  /**
+   * Jump to end of timeline
+   */
+  const handleJumpToEnd = useCallback(() => {
+    setPlayhead(timeline.duration);
+  }, [timeline.duration, setPlayhead]);
+  
+  /**
+   * Step forward one frame (assuming 30fps)
+   */
+  const handleStepForward = useCallback(() => {
+    const frameTime = 1 / 30; // Approx 0.033 seconds per frame
+    setPlayhead(Math.min(timeline.playhead + frameTime, timeline.duration));
+  }, [timeline.playhead, timeline.duration, setPlayhead]);
+  
+  /**
+   * Step backward one frame (assuming 30fps)
+   */
+  const handleStepBackward = useCallback(() => {
+    const frameTime = 1 / 30; // Approx 0.033 seconds per frame
+    setPlayhead(Math.max(timeline.playhead - frameTime, 0));
+  }, [timeline.playhead, setPlayhead]);
   
   /**
    * Update playhead during playback
@@ -335,32 +390,78 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       
       {/* Controls */}
       <div className="bg-gray-800 border-t border-gray-700 p-4 flex-shrink-0">
-        <div className="flex items-center gap-4">
-          {/* Play/Pause Button */}
-          <button
-            onClick={handlePlayPause}
-            disabled={timeline.duration === 0}
-            className="w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
-            title={timeline.duration === 0 ? 'No clips on timeline' : timeline.isPlaying ? 'Pause' : 'Play'}
-          >
-            {timeline.isPlaying ? '⏸' : '▶'}
-          </button>
-          
-          {/* Time Display */}
-          <div className="flex items-center gap-2 text-sm text-gray-300 font-mono">
-            <span>{formatDuration(timeline.playhead)}</span>
-            <span className="text-gray-600">/</span>
-            <span>{formatDuration(timeline.duration)}</span>
-          </div>
-          
-          {/* Progress Bar (Simple for MVP) */}
-          <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden cursor-pointer">
-            <div
-              className="h-full bg-blue-600 transition-all"
-              style={{
-                width: timeline.duration > 0 ? `${(timeline.playhead / timeline.duration) * 100}%` : '0%'
-              }}
-            />
+        <div className="flex flex-col gap-3">
+          {/* Main Controls Row */}
+          <div className="flex items-center gap-4">
+            {/* Transport Controls */}
+            <div className="flex items-center gap-2">
+              {/* Jump to Start */}
+              <button
+                onClick={handleJumpToStart}
+                disabled={timeline.duration === 0}
+                className="w-8 h-8 flex items-center justify-center bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                title="Jump to Start"
+              >
+                ⏮
+              </button>
+              
+              {/* Step Backward */}
+              <button
+                onClick={handleStepBackward}
+                disabled={timeline.duration === 0 || timeline.isPlaying}
+                className="w-8 h-8 flex items-center justify-center bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                title="Step Backward (1 frame)"
+              >
+                ⏪
+              </button>
+              
+              {/* Play/Pause */}
+              <button
+                onClick={handlePlayPause}
+                disabled={timeline.duration === 0}
+                className="w-12 h-12 flex items-center justify-center bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+                title={timeline.duration === 0 ? 'No clips on timeline' : timeline.isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+              >
+                {timeline.isPlaying ? '⏸' : '▶'}
+              </button>
+              
+              {/* Step Forward */}
+              <button
+                onClick={handleStepForward}
+                disabled={timeline.duration === 0 || timeline.isPlaying}
+                className="w-8 h-8 flex items-center justify-center bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                title="Step Forward (1 frame)"
+              >
+                ⏩
+              </button>
+              
+              {/* Jump to End */}
+              <button
+                onClick={handleJumpToEnd}
+                disabled={timeline.duration === 0}
+                className="w-8 h-8 flex items-center justify-center bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed"
+                title="Jump to End"
+              >
+                ⏭
+              </button>
+            </div>
+            
+            {/* Time Display */}
+            <div className="flex items-center gap-2 text-sm text-gray-300 font-mono bg-gray-900 px-3 py-1 rounded">
+              <span className="text-blue-400 font-semibold">{formatDuration(timeline.playhead)}</span>
+              <span className="text-gray-600">/</span>
+              <span>{formatDuration(timeline.duration)}</span>
+            </div>
+            
+            {/* Progress Bar */}
+            <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden cursor-pointer">
+              <div
+                className="h-full bg-blue-600 transition-all"
+                style={{
+                  width: timeline.duration > 0 ? `${(timeline.playhead / timeline.duration) * 100}%` : '0%'
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>

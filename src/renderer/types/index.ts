@@ -10,4 +10,6 @@
 export type { Clip, ClipMetadata } from './clip';
 export type { TimelineState, TimelineClip } from './timeline';
 export type { ProjectFile, ProjectMetadata } from './project';
+export type { Result } from './result';
+export { success, failure, formatError } from './result';
 

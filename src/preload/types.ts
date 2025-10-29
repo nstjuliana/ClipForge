@@ -8,6 +8,15 @@
  */
 
 /**
+ * Desktop source for screen recording
+ */
+export interface DesktopSource {
+  id: string;
+  name: string;
+  thumbnail?: string;
+}
+
+/**
  * Electron API interface
  * Available as window.electron in the renderer process
  */
@@ -20,6 +29,8 @@ export interface ElectronAPI {
   loadProject: (filePath: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
   exportVideo: (clips: unknown[], outputPath: string, options: unknown, timelineDuration?: number) => Promise<{ success: boolean; outputPath?: string; error?: string }>;
   getVideoBlobUrl: (filePath: string) => Promise<{ success: boolean; buffer?: Buffer; error?: string }>;
+  getDesktopSources: () => Promise<DesktopSource[]>;
+  saveRecording: (blob: Blob) => Promise<string>;
 }
 
 export {};

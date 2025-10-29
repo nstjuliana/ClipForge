@@ -11,10 +11,12 @@ import React, { useState, useCallback } from 'react';
 import { MediaProvider, useMedia } from '@/contexts/MediaContext';
 import { TimelineProvider, useTimeline } from '@/contexts/TimelineContext';
 import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
+import { RecordingProvider } from '@/contexts/RecordingContext';
 import { MediaLibraryPanel } from '@/components/panels/MediaLibraryPanel';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { TimelinePanel } from '@/components/panels/TimelinePanel';
 import { ExportModal } from '@/components/modals/ExportModal';
+import { RecordingScreen } from '@/components/screens/RecordingScreen';
 import type { ProjectFile } from '@/types/project';
 
 /**
@@ -54,6 +56,7 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
   } = useProject();
   
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isRecordingScreenOpen, setIsRecordingScreenOpen] = useState(false);
   
   /**
    * Handle back navigation
@@ -152,6 +155,13 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
         
         <div className="flex items-center gap-3">
           <button
+            onClick={() => setIsRecordingScreenOpen(true)}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
+            title="Record Screen/Webcam"
+          >
+            ⏺ Record
+          </button>
+          <button
             onClick={handleSaveProject}
             className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors text-sm"
             title="Save Project"
@@ -195,6 +205,11 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
       />
+      
+      {/* Recording Screen */}
+      {isRecordingScreenOpen && (
+        <RecordingScreen onClose={() => setIsRecordingScreenOpen(false)} />
+      )}
     </div>
   );
 }
@@ -219,7 +234,9 @@ export function MainScreen({ loadedProject, projectFilePath, ...props }: MainScr
     >
       <MediaProvider initialClips={initialClips}>
         <TimelineProvider initialTimeline={initialTimeline}>
-          <MainScreenContent {...props} />
+          <RecordingProvider>
+            <MainScreenContent {...props} />
+          </RecordingProvider>
         </TimelineProvider>
       </MediaProvider>
     </ProjectProvider>

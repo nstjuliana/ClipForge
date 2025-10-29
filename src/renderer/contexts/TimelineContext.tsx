@@ -52,6 +52,21 @@ interface TimelineContextValue {
   
   /** Get total timeline duration */
   getTotalDuration: () => number;
+  
+  /** Split clip at playhead position */
+  splitClipAtPlayhead: () => boolean;
+  
+  /** Get clip at playhead position */
+  getClipAtPlayhead: () => TimelineClip | null;
+  
+  /** Add a new track */
+  addTrack: () => void;
+  
+  /** Remove a track */
+  removeTrack: (trackIndex: number) => void;
+  
+  /** Move clip to different track */
+  moveClipToTrack: (timelineClipId: string, newTrackIndex: number) => void;
 }
 
 /**
@@ -78,16 +93,30 @@ export interface TimelineProviderProps {
  * @component
  */
 export function TimelineProvider({ children, initialTimeline }: TimelineProviderProps) {
-  // Initialize timeline state
-  const [timeline, setTimeline] = useState<TimelineState>(initialTimeline || {
-    clips: [],
-    playhead: 0,
-    isPlaying: false,
-    zoom: 100, // pixels per second
-    scrollPosition: 0,
-    duration: 0,
-    selectedClips: [],
-  });
+  // Initialize timeline state with default tracks
+  const defaultTracks: Track[] = [
+    { id: 'track-0', name: 'Track 1', index: 0 },
+    { id: 'track-1', name: 'Track 2', index: 1 },
+  ];
+  
+  // Handle backward compatibility: add tracks if not present in loaded project
+  const initializedTimeline: TimelineState = initialTimeline 
+    ? {
+        ...initialTimeline,
+        tracks: initialTimeline.tracks || defaultTracks, // Add tracks if missing
+      }
+    : {
+        clips: [],
+        tracks: defaultTracks,
+        playhead: 0,
+        isPlaying: false,
+        zoom: 100, // pixels per second
+        scrollPosition: 0,
+        duration: 0,
+        selectedClips: [],
+      };
+  
+  const [timeline, setTimeline] = useState<TimelineState>(initializedTimeline);
   
   /**
    * Generate unique timeline clip ID
@@ -235,8 +264,14 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
    * Clear timeline
    */
   const clearTimeline = useCallback(() => {
+    const defaultTracks: Track[] = [
+      { id: 'track-0', name: 'Track 1', index: 0 },
+      { id: 'track-1', name: 'Track 2', index: 1 },
+    ];
+    
     setTimeline({
       clips: [],
+      tracks: defaultTracks,
       playhead: 0,
       isPlaying: false,
       zoom: 100,
@@ -253,6 +288,153 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
     return timeline.duration;
   }, [timeline.duration]);
   
+  /**
+   * Get clip at playhead position
+   */
+  const getClipAtPlayhead = useCallback((): TimelineClip | null => {
+    const playhead = timeline.playhead;
+    const clip = timeline.clips.find(
+      c => playhead >= c.startTime && playhead < c.startTime + c.duration
+    );
+    return clip || null;
+  }, [timeline.playhead, timeline.clips]);
+  
+  /**
+   * Split clip at playhead position
+   * 
+   * Creates two new clips from the clip at the playhead position.
+   * Returns true if split was successful, false otherwise.
+   */
+  const splitClipAtPlayhead = useCallback((): boolean => {
+    const clip = getClipAtPlayhead();
+    
+    if (!clip) {
+      console.warn('No clip at playhead position to split');
+      return false;
+    }
+    
+    const playhead = timeline.playhead;
+    
+    // Calculate split point relative to clip's start
+    const splitPoint = playhead - clip.startTime;
+    
+    // Ensure split point is within clip bounds (not at edges)
+    if (splitPoint <= 0.01 || splitPoint >= clip.duration - 0.01) {
+      console.warn('Cannot split at clip edge');
+      return false;
+    }
+    
+    // Calculate new in/out points for both clips
+    const splitTimeInSource = clip.inPoint + splitPoint;
+    
+    // Create first clip (before split)
+    const firstClip: TimelineClip = {
+      ...clip,
+      id: generateTimelineClipId(),
+      duration: splitPoint,
+      outPoint: splitTimeInSource,
+    };
+    
+    // Create second clip (after split)
+    const secondClip: TimelineClip = {
+      ...clip,
+      id: generateTimelineClipId(),
+      startTime: clip.startTime + splitPoint,
+      duration: clip.duration - splitPoint,
+      inPoint: splitTimeInSource,
+    };
+    
+    // Update timeline: remove original clip and add two new clips
+    setTimeline(prev => {
+      const newClips = prev.clips
+        .filter(c => c.id !== clip.id)
+        .concat([firstClip, secondClip])
+        .sort((a, b) => a.startTime - b.startTime);
+      
+      return {
+        ...prev,
+        clips: newClips,
+      };
+    });
+    
+    return true;
+  }, [timeline.playhead, timeline.clips, getClipAtPlayhead, generateTimelineClipId]);
+  
+  /**
+   * Add a new track
+   */
+  const addTrack = useCallback(() => {
+    setTimeline(prev => {
+      const newIndex = prev.tracks.length;
+      const newTrack: Track = {
+        id: `track-${newIndex}`,
+        name: `Track ${newIndex + 1}`,
+        index: newIndex,
+      };
+      
+      return {
+        ...prev,
+        tracks: [...prev.tracks, newTrack],
+      };
+    });
+  }, []);
+  
+  /**
+   * Remove a track
+   * Moves all clips from the removed track to track 0
+   */
+  const removeTrack = useCallback((trackIndex: number) => {
+    setTimeline(prev => {
+      // Don't allow removing if only one track left
+      if (prev.tracks.length <= 1) {
+        console.warn('Cannot remove the last track');
+        return prev;
+      }
+      
+      // Move all clips from this track to track 0
+      const updatedClips = prev.clips.map(clip =>
+        clip.track === trackIndex ? { ...clip, track: 0 } : clip
+      );
+      
+      // Remove the track and reindex remaining tracks
+      const updatedTracks = prev.tracks
+        .filter(t => t.index !== trackIndex)
+        .map((t, i) => ({
+          ...t,
+          index: i,
+          name: `Track ${i + 1}`,
+        }));
+      
+      return {
+        ...prev,
+        clips: updatedClips,
+        tracks: updatedTracks,
+      };
+    });
+  }, []);
+  
+  /**
+   * Move clip to a different track
+   */
+  const moveClipToTrack = useCallback((timelineClipId: string, newTrackIndex: number) => {
+    setTimeline(prev => {
+      // Ensure track exists
+      if (newTrackIndex < 0 || newTrackIndex >= prev.tracks.length) {
+        console.warn('Invalid track index:', newTrackIndex);
+        return prev;
+      }
+      
+      const updatedClips = prev.clips.map(clip =>
+        clip.id === timelineClipId ? { ...clip, track: newTrackIndex } : clip
+      );
+      
+      return {
+        ...prev,
+        clips: updatedClips,
+      };
+    });
+  }, []);
+  
   // Memoize context value
   const value = useMemo(
     () => ({
@@ -268,6 +450,11 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       getTimelineClip,
       clearTimeline,
       getTotalDuration,
+      splitClipAtPlayhead,
+      getClipAtPlayhead,
+      addTrack,
+      removeTrack,
+      moveClipToTrack,
     }),
     [
       timeline,
@@ -282,6 +469,11 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       getTimelineClip,
       clearTimeline,
       getTotalDuration,
+      splitClipAtPlayhead,
+      getClipAtPlayhead,
+      addTrack,
+      removeTrack,
+      moveClipToTrack,
     ]
   );
   

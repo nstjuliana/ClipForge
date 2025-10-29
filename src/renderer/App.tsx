@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { LaunchScreen } from './components/screens/LaunchScreen.tsx';
 import { ProjectSelectionScreen } from './components/screens/ProjectSelectionScreen.tsx';
 import { MainScreen } from './components/screens/MainScreen.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import type { ProjectFile } from './types/project';
 
 /**
@@ -49,19 +50,26 @@ export function App() {
   };
 
   return (
-    <div className="h-screen w-screen bg-gray-900 text-white overflow-hidden">
-      {currentScreen === 'launch' && <LaunchScreen onNavigate={handleNavigate} />}
-      {currentScreen === 'project-selection' && (
-        <ProjectSelectionScreen onNavigate={handleNavigate} />
-      )}
-      {currentScreen === 'main' && (
-        <MainScreen 
-          onNavigate={handleNavigate}
-          loadedProject={loadedProject}
-          projectFilePath={projectFilePath}
-        />
-      )}
-    </div>
+    <ErrorBoundary
+      onError={(error, errorInfo) => {
+        console.error('App Error:', error);
+        console.error('Error Info:', errorInfo);
+      }}
+    >
+      <div className="h-screen w-screen bg-gray-900 text-white overflow-hidden">
+        {currentScreen === 'launch' && <LaunchScreen onNavigate={handleNavigate} />}
+        {currentScreen === 'project-selection' && (
+          <ProjectSelectionScreen onNavigate={handleNavigate} />
+        )}
+        {currentScreen === 'main' && (
+          <MainScreen 
+            onNavigate={handleNavigate}
+            loadedProject={loadedProject}
+            projectFilePath={projectFilePath}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 

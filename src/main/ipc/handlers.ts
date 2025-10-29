@@ -6,10 +6,12 @@
  * 
  * @module main/ipc/handlers
  */
-import { ipcMain, dialog } from 'electron';
+import { ipcMain, dialog, desktopCapturer } from 'electron';
 import { saveProject, loadProject } from '../services/projectIO';
 import { exportTimeline } from '../services/ffmpeg';
 import fs from 'fs/promises';
+import path from 'path';
+import { app } from 'electron';
 
 /**
  * Registers all IPC handlers
@@ -176,6 +178,63 @@ export function registerIPCHandlers(): void {
         success: false, 
         error: error instanceof Error ? error.message : 'Failed to read video file' 
       };
+    }
+  });
+
+  /**
+   * Handle desktop sources request
+   * Gets available screens and windows for recording
+   * 
+   * @returns Array of desktop sources with thumbnails
+   */
+  ipcMain.handle('recording:get-sources', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 150, height: 150 }
+      });
+
+      return sources.map(source => ({
+        id: source.id,
+        name: source.name,
+        thumbnail: source.thumbnail.toDataURL()
+      }));
+    } catch (error) {
+      console.error('Failed to get desktop sources:', error);
+      return [];
+    }
+  });
+
+  /**
+   * Handle recording save
+   * Saves recorded video blob to file system
+   * 
+   * @param _event - IPC event
+   * @param buffer - Video buffer from recording
+   * @returns Path to saved recording file
+   */
+  ipcMain.handle('recording:save', async (_event, buffer: Buffer) => {
+    try {
+      // Create recordings directory in user data path
+      const userDataPath = app.getPath('userData');
+      const recordingsDir = path.join(userDataPath, 'recordings');
+      
+      // Create directory if it doesn't exist
+      await fs.mkdir(recordingsDir, { recursive: true });
+      
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const fileName = `recording-${timestamp}.webm`;
+      const filePath = path.join(recordingsDir, fileName);
+      
+      // Write buffer to file
+      await fs.writeFile(filePath, buffer);
+      
+      console.log('Recording saved to:', filePath);
+      return filePath;
+    } catch (error) {
+      console.error('Failed to save recording:', error);
+      throw error;
     }
   });
 }

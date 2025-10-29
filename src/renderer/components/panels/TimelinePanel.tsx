@@ -33,14 +33,18 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 200 });
-  const { timeline, setPlayhead, updateTimelineClip } = useTimeline();
+  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack } = useTimeline();
   const { clips: mediaClips } = useMedia();
+  
+  // Check if playhead is over a clip
+  const clipAtPlayhead = getClipAtPlayhead();
   
   // Timeline constants
   const TRACK_HEIGHT = 80;
   const TRACK_PADDING = 10;
   const TIMELINE_PADDING = 50;
   const RULER_HEIGHT = 30;
+  const NUM_TRACKS = timeline.tracks.length;
   
   /**
    * Update dimensions on mount and resize
@@ -48,9 +52,13 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
+        // Calculate height to fit all tracks
+        const totalTrackHeight = RULER_HEIGHT + (NUM_TRACKS * (TRACK_HEIGHT + TRACK_PADDING)) + TRACK_PADDING;
+        const containerHeight = containerRef.current.offsetHeight;
+        
         setDimensions({
           width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight,
+          height: Math.max(containerHeight, totalTrackHeight),
         });
       }
     };
@@ -59,7 +67,57 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     window.addEventListener('resize', updateDimensions);
     
     return () => window.removeEventListener('resize', updateDimensions);
-  }, []);
+  }, [NUM_TRACKS, TRACK_HEIGHT, TRACK_PADDING, RULER_HEIGHT]);
+  
+  /**
+   * Handle split clip button click
+   */
+  const handleSplitClip = useCallback(() => {
+    const success = splitClipAtPlayhead();
+    if (!success) {
+      alert('Cannot split clip at this position');
+    }
+  }, [splitClipAtPlayhead]);
+  
+  /**
+   * Handle zoom in
+   */
+  const handleZoomIn = useCallback(() => {
+    setZoom(timeline.zoom * 1.5);
+  }, [timeline.zoom, setZoom]);
+  
+  /**
+   * Handle zoom out
+   */
+  const handleZoomOut = useCallback(() => {
+    setZoom(timeline.zoom / 1.5);
+  }, [timeline.zoom, setZoom]);
+  
+  /**
+   * Handle zoom reset
+   */
+  const handleZoomReset = useCallback(() => {
+    setZoom(100);
+  }, [setZoom]);
+  
+  /**
+   * Handle mouse wheel for zoom
+   */
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      // Zoom with Ctrl/Cmd + wheel
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        handleZoomIn();
+      } else {
+        handleZoomOut();
+      }
+    } else {
+      // Pan horizontally with wheel
+      const newScrollPosition = timeline.scrollPosition + (e.deltaY / 100);
+      setScrollPosition(newScrollPosition);
+    }
+  }, [timeline.scrollPosition, setScrollPosition, handleZoomIn, handleZoomOut]);
   
   /**
    * Handle stage click to set playhead
@@ -79,12 +137,26 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [timeline.zoom, setPlayhead]);
   
   /**
-   * Handle clip drag
+   * Handle clip drag - also detect track changes
    */
-  const handleClipDragEnd = useCallback((clipId: string, newX: number) => {
+  const handleClipDragEnd = useCallback((clipId: string, newX: number, newY: number) => {
     const newStartTime = Math.max(0, (newX - TIMELINE_PADDING) / timeline.zoom);
+    
+    // Calculate which track the clip was dropped on
+    const trackY = newY - RULER_HEIGHT - TRACK_PADDING;
+    const newTrackIndex = Math.floor(trackY / (TRACK_HEIGHT + TRACK_PADDING));
+    const clampedTrackIndex = Math.max(0, Math.min(newTrackIndex, NUM_TRACKS - 1));
+    
+    // Get the current clip to check if track changed
+    const clip = timeline.clips.find(c => c.id === clipId);
+    
+    if (clip && clip.track !== clampedTrackIndex) {
+      // Track changed
+      moveClipToTrack(clipId, clampedTrackIndex);
+    }
+    
     updateTimelineClip(clipId, { startTime: newStartTime });
-  }, [timeline.zoom, updateTimelineClip]);
+  }, [timeline.zoom, timeline.clips, updateTimelineClip, moveClipToTrack, NUM_TRACKS, TIMELINE_PADDING, RULER_HEIGHT, TRACK_PADDING, TRACK_HEIGHT]);
   
 /**
  * LEFT HANDLE – trim inPoint
@@ -191,13 +263,13 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
           draggable
           dragBoundFunc={(pos: { x: number; y: number }) => ({
             x: Math.max(TIMELINE_PADDING, pos.x),
-            y: groupY,
+            y: Math.max(RULER_HEIGHT + TRACK_PADDING, pos.y),
           })}
           onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
             // Only fire when the GROUP (not a handle) is dragged
             const target = e.target;
             if (target === e.currentTarget) {
-              handleClipDragEnd(timelineClip.id, target.x());
+              handleClipDragEnd(timelineClip.id, target.x(), target.y());
             }
           }}
         >
@@ -324,22 +396,74 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
     <div ref={containerRef} className={`flex flex-col h-full bg-gray-900 ${className}`}>
       {/* Timeline Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
-        <h3 className="text-sm font-semibold text-white">Timeline</h3>
         <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-white">Timeline</h3>
+          <span className="text-xs text-gray-500">({NUM_TRACKS} tracks)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSplitClip}
+            disabled={!clipAtPlayhead}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+            title={clipAtPlayhead ? 'Split clip at playhead' : 'Move playhead over a clip to split'}
+          >
+            ✂️ Split
+          </button>
+          <div className="flex items-center gap-1 border-l border-gray-700 pl-2">
+            <button
+              onClick={addTrack}
+              className="px-2 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600"
+              title="Add Track"
+            >
+              + Track
+            </button>
+            <button
+              onClick={() => NUM_TRACKS > 1 && removeTrack(NUM_TRACKS - 1)}
+              disabled={NUM_TRACKS <= 1}
+              className="px-2 py-1 text-xs bg-red-700 text-white rounded hover:bg-red-600 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+              title="Remove Last Track"
+            >
+              − Track
+            </button>
+          </div>
+          <div className="flex items-center gap-1 border-l border-gray-700 pl-2">
+            <button
+              onClick={handleZoomOut}
+              className="px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600"
+              title="Zoom Out (Ctrl+Wheel)"
+            >
+              −
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600 min-w-[60px]"
+              title="Reset Zoom"
+            >
+              {Math.round(timeline.zoom)}px/s
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600"
+              title="Zoom In (Ctrl+Wheel)"
+            >
+              +
+            </button>
+          </div>
           <button
             onClick={() => setPlayhead(0)}
             className="px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600"
+            title="Reset Playhead"
           >
-            ⏮ Reset
+            ⏮
           </button>
-          <span className="text-xs text-gray-400">
-            Zoom: {Math.round(timeline.zoom)}px/s
-          </span>
         </div>
       </div>
       
       {/* Timeline Canvas */}
-      <div className="flex-1 overflow-auto bg-gray-900">
+      <div 
+        className="flex-1 overflow-auto bg-gray-900"
+        onWheel={handleWheel}
+      >
         <Stage
           ref={stageRef}
           width={dimensions.width}
@@ -361,16 +485,30 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
             {/* Ruler */}
             {renderRuler()}
             
-            {/* Track Background */}
-            <Rect
-              x={TIMELINE_PADDING}
-              y={RULER_HEIGHT + TRACK_PADDING}
-              width={dimensions.width - TIMELINE_PADDING}
-              height={TRACK_HEIGHT}
-              fill="#2a2a2a"
-              stroke="#3a3a3a"
-              strokeWidth={1}
-            />
+            {/* Track Backgrounds */}
+            {timeline.tracks.map((track) => (
+              <React.Fragment key={track.id}>
+                <Rect
+                  x={TIMELINE_PADDING}
+                  y={RULER_HEIGHT + TRACK_PADDING + track.index * (TRACK_HEIGHT + TRACK_PADDING)}
+                  width={dimensions.width - TIMELINE_PADDING}
+                  height={TRACK_HEIGHT}
+                  fill={track.index % 2 === 0 ? "#2a2a2a" : "#252530"}
+                  stroke="#3a3a3a"
+                  strokeWidth={1}
+                />
+                {/* Track Label */}
+                <Text
+                  x={8}
+                  y={RULER_HEIGHT + TRACK_PADDING + track.index * (TRACK_HEIGHT + TRACK_PADDING) + TRACK_HEIGHT / 2 - 6}
+                  text={track.name}
+                  fontSize={10}
+                  fill="#666"
+                  rotation={-90}
+                  offsetX={-10}
+                />
+              </React.Fragment>
+            ))}
             
             {/* Clips */}
             {renderClips()}

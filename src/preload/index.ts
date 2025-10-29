@@ -86,6 +86,26 @@ const electronAPI = {
   getVideoBlobUrl: (filePath: string): Promise<{ success: boolean; buffer?: Buffer; error?: string }> => {
     return ipcRenderer.invoke('video:getBlobUrl', filePath);
   },
+
+  /**
+   * Gets available desktop sources for screen recording
+   * @returns Promise resolving to array of desktop sources
+   */
+  getDesktopSources: () => {
+    return ipcRenderer.invoke('recording:get-sources');
+  },
+
+  /**
+   * Saves recording blob to file system
+   * @param blob - Recorded video blob
+   * @returns Promise resolving to saved file path
+   */
+  saveRecording: async (blob: Blob): Promise<string> => {
+    // Convert blob to array buffer
+    const arrayBuffer = await blob.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return ipcRenderer.invoke('recording:save', buffer);
+  },
 };
 
 /**

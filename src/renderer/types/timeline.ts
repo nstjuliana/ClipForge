@@ -40,6 +40,22 @@ export interface TimelineClip {
 }
 
 /**
+ * Timeline Track definition
+ * 
+ * @interface Track
+ */
+export interface Track {
+  /** Track ID */
+  id: string;
+  
+  /** Track name */
+  name: string;
+  
+  /** Track index (0-based) */
+  index: number;
+}
+
+/**
  * Timeline state
  * 
  * Represents the current state of the timeline.
@@ -49,6 +65,9 @@ export interface TimelineClip {
 export interface TimelineState {
   /** All clips on the timeline */
   clips: TimelineClip[];
+
+  /** Available tracks */
+  tracks: Track[];
 
   /** Current playhead position (in seconds) */
   playhead: number;
