@@ -93,12 +93,15 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     const clip = timeline.clips.find(c => c.id === clipId);
     if (!clip) return;
     
+    const mediaClip = mediaClips.find(c => c.id === clip.clipId);
+    if (!mediaClip) return;
+    
     const deltaTime = deltaX / timeline.zoom;
     const newInPoint = Math.max(0, clip.inPoint + deltaTime);
     const newStartTime = clip.startTime + deltaTime;
     const newDuration = clip.duration - deltaTime;
     
-    // Ensure we don't trim beyond outPoint
+    // Ensure we don't trim beyond outPoint and duration stays valid
     if (newInPoint < clip.outPoint && newDuration > 0) {
       updateTimelineClip(clipId, {
         inPoint: newInPoint,
@@ -106,7 +109,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         duration: newDuration,
       });
     }
-  }, [timeline.clips, timeline.zoom, updateTimelineClip]);
+  }, [timeline.clips, timeline.zoom, updateTimelineClip, mediaClips]);
   
   /**
    * Handle trim handle drag (right handle - adjust outPoint)
@@ -115,18 +118,21 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     const clip = timeline.clips.find(c => c.id === clipId);
     if (!clip) return;
     
+    const mediaClip = mediaClips.find(c => c.id === clip.clipId);
+    if (!mediaClip) return;
+    
     const deltaTime = deltaX / timeline.zoom;
-    const newOutPoint = Math.min(clip.outPoint + deltaTime, clip.outPoint);
+    const newOutPoint = Math.min(clip.outPoint + deltaTime, mediaClip.duration);
     const newDuration = clip.duration + deltaTime;
     
-    // Ensure we don't trim beyond inPoint
-    if (newOutPoint > clip.inPoint && newDuration > 0) {
+    // Ensure we don't trim beyond inPoint and don't exceed source material
+    if (newOutPoint > clip.inPoint && newDuration > 0 && newOutPoint <= mediaClip.duration) {
       updateTimelineClip(clipId, {
         outPoint: newOutPoint,
         duration: newDuration,
       });
     }
-  }, [timeline.clips, timeline.zoom, updateTimelineClip]);
+  }, [timeline.clips, timeline.zoom, updateTimelineClip, mediaClips]);
   
   /**
    * Render timeline ruler (time markers)
@@ -185,6 +191,10 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
             strokeWidth={2}
             cornerRadius={4}
             draggable
+            dragBoundFunc={(pos) => ({
+              x: pos.x,
+              y: y,
+            })}
             onDragEnd={(e) => {
               handleClipDragEnd(timelineClip.id, e.target.x());
             }}
@@ -210,10 +220,15 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
             fill="#FFF"
             opacity={0.8}
             draggable
-            dragBoundFunc={(pos) => ({
-              x: Math.min(pos.x, x + width - 10),
-              y: y,
-            })}
+            dragBoundFunc={(pos) => {
+              // Calculate minimum x position to keep inPoint >= 0
+              const minX = x - timelineClip.inPoint * timeline.zoom;
+              
+              return {
+                x: Math.max(minX, Math.min(pos.x, x + width - 10)),
+                y: y,
+              };
+            }}
             onDragMove={(e) => {
               const deltaX = e.target.x() - x;
               handleLeftTrimDrag(timelineClip.id, deltaX);
@@ -232,10 +247,16 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
             fill="#FFF"
             opacity={0.8}
             draggable
-            dragBoundFunc={(pos) => ({
-              x: Math.max(pos.x, x + 10),
-              y: y,
-            })}
+            dragBoundFunc={(pos) => {
+              // Calculate maximum x position based on source material duration
+              const maxWidth = (mediaClip.duration - timelineClip.inPoint) * timeline.zoom;
+              const maxX = TIMELINE_PADDING + timelineClip.startTime * timeline.zoom + maxWidth;
+              
+              return {
+                x: Math.max(x + 10, Math.min(pos.x, maxX)),
+                y: y,
+              };
+            }}
             onDragMove={(e) => {
               const deltaX = e.target.x() - (x + width - 8);
               handleRightTrimDrag(timelineClip.id, deltaX);
