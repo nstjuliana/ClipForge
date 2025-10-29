@@ -41,8 +41,8 @@ export interface MainScreenProps {
  * Inner component that has access to all contexts.
  */
 function MainScreenContent({ onNavigate }: MainScreenProps) {
-  const { clips, clearAll: clearMedia } = useMedia();
-  const { timeline, clearTimeline } = useTimeline();
+  const { clips } = useMedia();
+  const { timeline } = useTimeline();
   const {
     metadata,
     exportSettings,
@@ -51,7 +51,6 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
     hasUnsavedChanges,
     markSaved,
     markModified,
-    updateMetadata,
   } = useProject();
   
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -113,24 +112,6 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
     }
   }, [projectFilePath, metadata, exportSettings, clips, timeline, setProjectFilePath, markSaved]);
   
-  /**
-   * Handle save as project
-   */
-  const handleSaveAsProject = useCallback(async () => {
-    try {
-      const savePath = await window.electron.saveProjectDialog();
-      if (!savePath) return;
-      
-      // Update path to null to force save as
-      setProjectFilePath(null);
-      
-      // Then save
-      await handleSaveProject();
-    } catch (error) {
-      console.error('Failed to save project:', error);
-      alert('Failed to save project. Please try again.');
-    }
-  }, [handleSaveProject, setProjectFilePath]);
   
   /**
    * Handle export

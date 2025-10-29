@@ -40,7 +40,9 @@ export function MediaLibraryPanel({ className = '' }: MediaLibraryPanelProps) {
    * Handle file import button click
    */
   const handleImportClick = useCallback(() => {
-    fileInputRef.current?.click();
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   }, []);
   
   /**

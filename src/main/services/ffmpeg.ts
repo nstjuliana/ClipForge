@@ -14,13 +14,45 @@ import path from 'path';
 import fs from 'fs/promises';
 import { randomUUID } from 'crypto';
 
-// Set FFmpeg and FFprobe paths
-if (ffmpegStatic) {
-  ffmpeg.setFfmpegPath(ffmpegStatic);
+/**
+ * Resolves a path that might be inside an ASAR archive to the unpacked location
+ * 
+ * When Electron packages the app, native executables are unpacked to app.asar.unpacked.
+ * This function checks if a path is inside app.asar and resolves it to the unpacked location.
+ * 
+ * @param filePath - The original file path
+ * @returns The resolved path (either original or unpacked location)
+ */
+function resolveUnpackedPath(filePath: string): string {
+  if (!filePath) return filePath;
+  
+  // In production, replace .asar with .asar.unpacked
+  if (filePath.includes('.asar')) {
+    return filePath.replace(/\.asar([\\/])/g, '.asar.unpacked$1');
+  }
+  
+  return filePath;
 }
-if (ffprobeStatic.path) {
-  ffmpeg.setFfprobePath(ffprobeStatic.path);
+
+/**
+ * Sets up FFmpeg and FFprobe paths, handling ASAR unpacking in production
+ */
+function setupFFmpegPaths() {
+  if (ffmpegStatic) {
+    const resolvedPath = resolveUnpackedPath(ffmpegStatic);
+    ffmpeg.setFfmpegPath(resolvedPath);
+    console.log('FFmpeg path set to:', resolvedPath);
+  }
+  
+  if (ffprobeStatic?.path) {
+    const resolvedPath = resolveUnpackedPath(ffprobeStatic.path);
+    ffmpeg.setFfprobePath(resolvedPath);
+    console.log('FFprobe path set to:', resolvedPath);
+  }
 }
+
+// Initialize paths
+setupFFmpegPaths();
 
 /**
  * Timeline clip data for export
@@ -99,7 +131,7 @@ export function exportSingleClip(
     
     // Add progress handler
     if (onProgress) {
-      command.on('progress', (progress) => {
+      command.on('progress', (progress: { percent?: number }) => {
         if (progress.percent) {
           onProgress(Math.min(progress.percent, 100));
         }
@@ -110,7 +142,7 @@ export function exportSingleClip(
       .on('end', () => {
         resolve({ success: true, outputPath });
       })
-      .on('error', (err) => {
+      .on('error', (err: Error) => {
         console.error('FFmpeg error:', err);
         resolve({ success: false, error: err.message });
       })
@@ -210,7 +242,7 @@ export async function exportTimeline(
       
       command
         .on('end', () => resolve())
-        .on('error', (err) => reject(err))
+        .on('error', (err: Error) => reject(err))
         .save(outputPath);
     });
     
@@ -235,9 +267,9 @@ export async function exportTimeline(
  * @param filePath - Path to video file
  * @returns Promise resolving to metadata
  */
-export function getVideoMetadata(filePath: string): Promise<any> {
+export function getVideoMetadata(filePath: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
+    ffmpeg.ffprobe(filePath, (err: Error | null, metadata: unknown) => {
       if (err) {
         reject(err);
       } else {

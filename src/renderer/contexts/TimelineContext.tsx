@@ -7,7 +7,7 @@
  * @module contexts/TimelineContext
  */
 
-import React, { createContext, useContext, useState, useMemo, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
 import type { TimelineClip, TimelineState } from '@/types/timeline';
 import type { Clip } from '@/types/clip';
 

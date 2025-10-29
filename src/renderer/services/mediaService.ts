@@ -105,9 +105,11 @@ export async function importVideoFile(file: File): Promise<MediaImportResult> {
     const thumbnail = await generateThumbnailFromFile(file);
     
     // Create clip object
+    // In Electron renderer, File objects from file inputs don't have a path property
+    // We use an object URL as a temporary identifier and the actual path is handled via IPC
     const clip: Clip = {
       id: generateClipId(),
-      filePath: file.path || URL.createObjectURL(file), // Use object URL if path not available
+      filePath: URL.createObjectURL(file), // Temporary identifier, actual path handled in IPC
       name: file.name,
       duration: metadata.duration,
       resolution: metadata.resolution,

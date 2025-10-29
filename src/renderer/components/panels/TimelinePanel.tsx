@@ -33,7 +33,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 200 });
-  const { timeline, setPlayhead, updateTimelineClip, removeTimelineClip } = useTimeline();
+  const { timeline, setPlayhead, updateTimelineClip } = useTimeline();
   const { clips: mediaClips } = useMedia();
   
   // Timeline constants

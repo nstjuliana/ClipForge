@@ -7,7 +7,7 @@
  * @component
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useTimeline } from '@/contexts/TimelineContext';
 import { useMedia } from '@/contexts/MediaContext';
 import { useProject } from '@/contexts/ProjectContext';
@@ -44,7 +44,7 @@ type ExportState = 'idle' | 'loading-ffmpeg' | 'exporting' | 'success' | 'error'
 export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   const { timeline } = useTimeline();
   const { clips } = useMedia();
-  const { metadata, exportSettings } = useProject();
+  const { metadata } = useProject();
   
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [progress, setProgress] = useState(0);
@@ -164,7 +164,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                 <input
                   type="text"
                   value={fileName}
-                  onChange={(e) => setFileName(e.target.value)}
+                  onChange={(e) => setFileName((e.target as HTMLInputElement).value)}
                   className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                   placeholder="my-video.mp4"
                 />

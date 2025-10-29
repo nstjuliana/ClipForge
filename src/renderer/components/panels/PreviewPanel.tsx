@@ -7,7 +7,7 @@
  * @component
  */
 
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { useTimeline } from '@/contexts/TimelineContext';
 import { useMedia } from '@/contexts/MediaContext';
 import { formatDuration } from '@/services/metadataService';
@@ -97,7 +97,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       
       // Request video buffer via IPC and create blob URL
       window.electron.getVideoBlobUrl(current.clip.filePath)
-        .then(result => {
+        .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
           if (!result.success || !result.buffer) {
             console.error('Failed to load video:', result.error);
             setIsLoading(false);
@@ -116,7 +116,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
           setVideoBlobUrl(url);
           setIsLoading(false);
         })
-        .catch(err => {
+        .catch((err: unknown) => {
           console.error('Failed to load video:', err);
           setIsLoading(false);
         });
@@ -154,7 +154,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     
     // If we're playing and video is paused, start it (in case we just entered a clip from blank area)
     if (timeline.isPlaying && video.paused && video.readyState >= 2) {
-      video.play().catch(err => {
+      video.play().catch((err: unknown) => {
         console.error('Failed to start video playback:', err);
       });
     }

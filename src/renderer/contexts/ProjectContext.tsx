@@ -8,7 +8,7 @@
  */
 
 import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
-import type { ProjectFile, ProjectMetadata, ExportSettings } from '@/types/project';
+import type { ProjectMetadata, ExportSettings } from '@/types/project';
 
 /**
  * Project context value type

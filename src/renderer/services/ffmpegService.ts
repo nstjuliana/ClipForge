@@ -110,13 +110,9 @@ export async function exportTimeline(
     
     // Setup progress listener
     if (onProgress) {
-      // Listen for progress events from main process
-      const progressHandler = (_event: any, progress: number) => {
-        onProgress(progress);
-      };
-      
       // Note: In a full implementation, we'd use ipcRenderer.on here
       // For now, we'll rely on the export promise
+      // Progress updates can be handled via the export promise
     }
     
     // Call main process export
