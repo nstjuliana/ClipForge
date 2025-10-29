@@ -147,6 +147,73 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [RULER_HEIGHT, TRACK_PADDING, TRACK_HEIGHT, NUM_TRACKS]);
 
   /**
+   * Snap threshold in pixels - how close clips need to be to snap
+   */
+  const SNAP_THRESHOLD = 10;
+
+  /**
+   * Find snap points from nearby clips and snap X position if close enough
+   * Left edge snaps to right edges, right edge snaps to left edges
+   */
+  const snapToClipEdges = useCallback((x: number, y: number, currentClipId: string, clipWidth: number): number => {
+    // Calculate which track we're on
+    const trackY = y - RULER_HEIGHT - TRACK_PADDING;
+    const trackIndex = Math.round(trackY / (TRACK_HEIGHT + TRACK_PADDING));
+    const clampedTrackIndex = Math.max(0, Math.min(trackIndex, NUM_TRACKS - 1));
+    
+    // Get all clips on relevant tracks (excluding the current clip being dragged)
+    const relevantClips: Array<{ clip: typeof timeline.clips[0]; trackIndex: number }> = [];
+    
+    // Same track
+    timeline.clips
+      .filter(clip => clip.id !== currentClipId && clip.track === clampedTrackIndex)
+      .forEach(clip => relevantClips.push({ clip, trackIndex: clampedTrackIndex }));
+    
+    // Adjacent tracks
+    if (clampedTrackIndex > 0) {
+      timeline.clips
+        .filter(clip => clip.id !== currentClipId && clip.track === clampedTrackIndex - 1)
+        .forEach(clip => relevantClips.push({ clip, trackIndex: clampedTrackIndex - 1 }));
+    }
+    if (clampedTrackIndex < NUM_TRACKS - 1) {
+      timeline.clips
+        .filter(clip => clip.id !== currentClipId && clip.track === clampedTrackIndex + 1)
+        .forEach(clip => relevantClips.push({ clip, trackIndex: clampedTrackIndex + 1 }));
+    }
+    
+    // Calculate current clip's left and right edges
+    const currentLeftEdge = x;
+    const currentRightEdge = x + clipWidth;
+    
+    // Find snap candidates:
+    // - Right edges of other clips (for left edge snapping)
+    // - Left edges of other clips (for right edge snapping)
+    let snappedX = x;
+    let minDistance = SNAP_THRESHOLD;
+    
+    relevantClips.forEach(({ clip }) => {
+      const otherClipStartX = TIMELINE_PADDING + clip.startTime * timeline.zoom;
+      const otherClipEndX = otherClipStartX + clip.duration * timeline.zoom;
+      
+      // Check if current clip's LEFT edge should snap to other clip's RIGHT edge
+      const leftToRightDistance = Math.abs(currentLeftEdge - otherClipEndX);
+      if (leftToRightDistance < minDistance) {
+        minDistance = leftToRightDistance;
+        snappedX = otherClipEndX; // Snap left edge to right edge
+      }
+      
+      // Check if current clip's RIGHT edge should snap to other clip's LEFT edge
+      const rightToLeftDistance = Math.abs(currentRightEdge - otherClipStartX);
+      if (rightToLeftDistance < minDistance) {
+        minDistance = rightToLeftDistance;
+        snappedX = otherClipStartX - clipWidth; // Adjust X so right edge snaps to left edge
+      }
+    });
+    
+    return Math.max(TIMELINE_PADDING, snappedX);
+  }, [timeline.clips, timeline.zoom, NUM_TRACKS, TIMELINE_PADDING, RULER_HEIGHT, TRACK_PADDING, TRACK_HEIGHT]);
+
+  /**
    * Handle clip drag - also detect track changes
    */
   const handleClipDragEnd = useCallback((clipId: string, newX: number, newY: number) => {
@@ -271,10 +338,15 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
           x={groupX}
           y={groupY}
           draggable
-          dragBoundFunc={(pos: { x: number; y: number }) => ({
-            x: Math.max(TIMELINE_PADDING, pos.x),
-            y: snapToTrack(pos.y), // Snap Y position to nearest track
-          })}
+          dragBoundFunc={(pos: { x: number; y: number }) => {
+            const snappedY = snapToTrack(pos.y);
+            const clipWidth = timelineClip.duration * timeline.zoom;
+            const snappedX = snapToClipEdges(pos.x, snappedY, timelineClip.id, clipWidth);
+            return {
+              x: snappedX,
+              y: snappedY,
+            };
+          }}
           onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
             // Only fire when the GROUP (not a handle) is dragged
             const target = e.target;
