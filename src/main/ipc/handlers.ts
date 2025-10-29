@@ -265,7 +265,7 @@ export function registerIPCHandlers(): void {
       
       // Use ffmpeg to remux the file with duration metadata
       // We copy the video/audio streams and explicitly set the duration
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         ffmpeg(tempPath)
           .outputOptions([
             '-c copy', // Copy codecs without re-encoding
@@ -293,6 +293,121 @@ export function registerIPCHandlers(): void {
     } catch (error) {
       console.error('Failed to save recording:', error);
       throw error;
+    }
+  });
+
+  /**
+   * Handle media access request
+   * Request system-level media access on macOS
+   * 
+   * @param _event - IPC event
+   * @param mediaType - Type of media ('camera' or 'microphone')
+   * @returns Whether access was granted
+   */
+  ipcMain.handle('media:request-access', async (_event, mediaType: 'camera' | 'microphone') => {
+    try {
+      // On macOS, use systemPreferences to request access
+      if (process.platform === 'darwin') {
+        const { systemPreferences } = require('electron');
+        if (systemPreferences.askForMediaAccess) {
+          const granted = await systemPreferences.askForMediaAccess(mediaType);
+          return { success: true, granted };
+        }
+      }
+      // On other platforms, assume granted (browser-level permissions handle it)
+      return { success: true, granted: true };
+    } catch (error) {
+      console.error('Failed to request media access:', error);
+      return { success: false, granted: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  /**
+   * Handle system permission check
+   * Check if system-level permissions are granted
+   * 
+   * @param _event - IPC event
+   * @param mediaType - Type of media ('camera' or 'microphone')
+   * @returns Permission status
+   */
+  ipcMain.handle('media:check-system-permissions', async (_event, mediaType: 'camera' | 'microphone' | 'screen') => {
+    try {
+      const platform = process.platform;
+      
+      if (platform === 'darwin') {
+        // macOS - can check actual system permissions
+        const { systemPreferences } = require('electron');
+        if (systemPreferences.getMediaAccessStatus) {
+          const status = systemPreferences.getMediaAccessStatus(mediaType);
+          console.log(`[System Permissions] ${mediaType} status on macOS: ${status}`);
+          return {
+            success: true,
+            platform,
+            status,
+            granted: status === 'granted',
+            help: status === 'denied' 
+              ? 'Please grant camera/microphone access in System Preferences > Security & Privacy > Privacy'
+              : null
+          };
+        }
+      } else if (platform === 'win32') {
+        // Windows - provide guidance
+        console.log(`[System Permissions] Windows detected - cannot check ${mediaType} permissions programmatically`);
+        
+        let helpMessage = '';
+        if (mediaType === 'microphone') {
+          helpMessage = 'To enable microphone access:\n' +
+                        '1. Open Windows Settings (Press Win + I)\n' +
+                        '2. Go to Privacy & Security > Microphone\n' +
+                        '3. Enable "Let apps access your microphone"\n' +
+                        '4. Enable "Let desktop apps access your microphone"\n' +
+                        '5. Scroll down and find "ClipForge" in the list\n' +
+                        '6. Make sure the toggle is ON for ClipForge\n' +
+                        '7. Restart ClipForge after making changes';
+        } else if (mediaType === 'camera') {
+          helpMessage = 'To enable camera access:\n' +
+                        '1. Open Windows Settings (Press Win + I)\n' +
+                        '2. Go to Privacy & Security > Camera\n' +
+                        '3. Enable "Let apps access your camera"\n' +
+                        '4. Enable "Let desktop apps access your camera"\n' +
+                        '5. Scroll down and find "ClipForge" in the list\n' +
+                        '6. Make sure the toggle is ON for ClipForge\n' +
+                        '7. Restart ClipForge after making changes';
+        } else {
+          helpMessage = 'If you\'re having permission issues:\n' +
+                        '1. Open Windows Settings\n' +
+                        '2. Go to Privacy & Security > Camera (or Microphone)\n' +
+                        '3. Enable "Let apps access your camera/microphone"\n' +
+                        '4. Find ClipForge in the list and enable it\n' +
+                        '5. Restart the app';
+        }
+        
+        return {
+          success: true,
+          platform,
+          status: 'unknown',
+          granted: null,
+          help: helpMessage
+        };
+      } else {
+        // Linux and others
+        console.log(`[System Permissions] ${platform} detected`);
+        return {
+          success: true,
+          platform,
+          status: 'unknown',
+          granted: null,
+          help: 'Make sure your system allows applications to access camera/microphone devices'
+        };
+      }
+      
+      return { success: false, error: 'Unable to check permissions' };
+    } catch (error) {
+      console.error('Failed to check system permissions:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   });
 }

@@ -259,7 +259,6 @@ export async function exportTimeline(
     
     // Build segments array (clips + gaps)
     const segments: ExportSegment[] = [];
-    const resolution = options.resolution || [1920, 1080];
     const finalDuration = timelineDuration || (sortedClips.length > 0 
       ? Math.max(...sortedClips.map(c => c.startTime + c.duration))
       : 0);

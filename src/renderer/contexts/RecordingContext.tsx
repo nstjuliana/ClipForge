@@ -24,6 +24,16 @@ export interface RecordingSource {
 }
 
 /**
+ * Media device info
+ */
+export interface MediaDeviceInfo {
+  deviceId: string;
+  kind: 'videoinput' | 'audioinput' | 'audiooutput';
+  label: string;
+  groupId: string;
+}
+
+/**
  * Recording state
  * 
  * @interface RecordingState
@@ -52,6 +62,18 @@ export interface RecordingState {
   
   /** Whether permissions are granted */
   permissionsGranted: boolean;
+  
+  /** Available video input devices (webcams) */
+  videoDevices: MediaDeviceInfo[];
+  
+  /** Available audio input devices (microphones) */
+  audioDevices: MediaDeviceInfo[];
+  
+  /** Selected video device ID */
+  selectedVideoDeviceId: string | null;
+  
+  /** Selected audio device ID */
+  selectedAudioDeviceId: string | null;
 }
 
 /**
@@ -71,6 +93,15 @@ interface RecordingContextValue {
   
   /** Select a recording source */
   selectSource: (sourceId: string) => void;
+  
+  /** Enumerate available media devices (webcams and microphones) */
+  enumerateDevices: () => Promise<void>;
+  
+  /** Select a video input device */
+  selectVideoDevice: (deviceId: string) => void;
+  
+  /** Select an audio input device */
+  selectAudioDevice: (deviceId: string) => void;
   
   /** Start recording */
   startRecording: (mode: RecordingMode, sourceId?: string) => Promise<void>;
@@ -120,6 +151,10 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
     selectedSourceId: null,
     statusMessage: null,
     permissionsGranted: false,
+    videoDevices: [],
+    audioDevices: [],
+    selectedVideoDeviceId: null,
+    selectedAudioDeviceId: null,
   });
   
   // Media recorder refs
@@ -134,13 +169,24 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
    */
   const requestPermissions = useCallback(async (mode: RecordingMode): Promise<boolean> => {
     try {
+      console.log(`[Permissions] Requesting permissions for mode: ${mode}`);
       setRecording(prev => ({ ...prev, statusMessage: 'Requesting permissions...' }));
+      
+      // Check if media devices API is available
+      if (!navigator.mediaDevices) {
+        console.error('[Permissions] navigator.mediaDevices not available');
+        setRecording(prev => ({
+          ...prev,
+          statusMessage: 'Media devices API not available',
+          permissionsGranted: false,
+        }));
+        return false;
+      }
       
       if (mode === 'screen' || mode === 'pip') {
         // For screen recording, we need display media
-        // Note: We'll use Electron's desktopCapturer in the actual implementation
-        // For now, we'll check if the API is available
-        if (!navigator.mediaDevices?.getDisplayMedia) {
+        if (!navigator.mediaDevices.getDisplayMedia) {
+          console.error('[Permissions] getDisplayMedia not available');
           setRecording(prev => ({
             ...prev,
             statusMessage: 'Screen capture not supported',
@@ -152,7 +198,8 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       
       if (mode === 'webcam' || mode === 'pip') {
         // For webcam, we need user media
-        if (!navigator.mediaDevices?.getUserMedia) {
+        if (!navigator.mediaDevices.getUserMedia) {
+          console.error('[Permissions] getUserMedia not available');
           setRecording(prev => ({
             ...prev,
             statusMessage: 'Camera not supported',
@@ -160,8 +207,101 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           }));
           return false;
         }
+        
+        // Test video and audio separately to identify which permission is failing
+        let videoGranted = false;
+        let audioGranted = false;
+        
+        // Test video access
+        try {
+          console.log('[Permissions] Testing camera access...');
+          const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          console.log('[Permissions] Camera access: GRANTED');
+          videoStream.getTracks().forEach(track => {
+            console.log(`[Permissions] Video track: ${track.label}`);
+            track.stop();
+          });
+          videoGranted = true;
+        } catch (videoError: any) {
+          console.error('[Permissions] Camera access failed:', videoError);
+          videoGranted = false;
+        }
+        
+        // Test audio access (microphone) separately
+        try {
+          console.log('[Permissions] Testing microphone access...');
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          console.log('[Permissions] Microphone access: GRANTED');
+          audioStream.getTracks().forEach(track => {
+            console.log(`[Permissions] Audio track: ${track.label}`);
+            track.stop();
+          });
+          audioGranted = true;
+        } catch (audioError: any) {
+          console.error('[Permissions] Microphone access failed:', audioError);
+          console.error('[Permissions] Microphone error name:', audioError.name);
+          console.error('[Permissions] Microphone error message:', audioError.message);
+          audioGranted = false;
+          
+          // Check system-level permissions specifically for microphone
+          if ((window as any).electron?.checkSystemPermissions) {
+            console.log('[Permissions] Checking system-level microphone permissions...');
+            
+            const micCheck = await (window as any).electron.checkSystemPermissions('microphone');
+            console.log('[Permissions] Microphone system check:', micCheck);
+            
+            // Show microphone-specific help
+            if (micCheck.help) {
+              alert(`Microphone Permission Required\n\n${micCheck.help}`);
+            } else {
+              // Generic microphone help (if platform check isn't available)
+              if (micCheck.platform === 'win32' || navigator.platform.includes('Win')) {
+                alert(`Microphone Permission Required\n\n` +
+                      `Please enable microphone access:\n` +
+                      `1. Open Windows Settings (Win + I)\n` +
+                      `2. Go to Privacy & Security > Microphone\n` +
+                      `3. Enable "Let apps access your microphone"\n` +
+                      `4. Enable "Let desktop apps access your microphone"\n` +
+                      `5. Find ClipForge in the list and make sure it's enabled\n` +
+                      `6. Restart the app`);
+              } else {
+                alert(`Microphone Permission Required\n\n` +
+                      `Please check your system settings to enable microphone access for ClipForge.`);
+              }
+            }
+          }
+        }
+        
+        // If audio is required and not granted, fail
+        if (!audioGranted && recording.audioEnabled) {
+          setRecording(prev => ({
+            ...prev,
+            statusMessage: `Microphone permission denied. Check Windows Settings > Privacy > Microphone.`,
+            permissionsGranted: false,
+          }));
+          return false;
+        }
+        
+        // If neither is granted, fail
+        if (!videoGranted && !audioGranted) {
+          setRecording(prev => ({
+            ...prev,
+            statusMessage: `Camera and microphone permissions denied. Check your OS settings.`,
+            permissionsGranted: false,
+          }));
+          return false;
+        }
+        
+        // At least one is granted, continue (audio might be optional)
+        if (!videoGranted) {
+          console.warn('[Permissions] Video not available, but continuing with audio only');
+        }
+        if (!audioGranted) {
+          console.warn('[Permissions] Audio not available - continuing without audio');
+        }
       }
       
+      console.log('[Permissions] Permissions granted successfully');
       setRecording(prev => ({
         ...prev,
         permissionsGranted: true,
@@ -169,11 +309,16 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       }));
       
       return true;
-    } catch (error) {
-      console.error('Permission request failed:', error);
+    } catch (error: any) {
+      console.error('[Permissions] Permission request failed:', error);
+      console.error('[Permissions] Error details:', {
+        name: error?.name,
+        message: error?.message,
+        stack: error?.stack
+      });
       setRecording(prev => ({
         ...prev,
-        statusMessage: 'Permission denied',
+        statusMessage: `Permission denied: ${error?.message || 'Unknown error'}`,
         permissionsGranted: false,
       }));
       return false;
@@ -189,8 +334,8 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       setRecording(prev => ({ ...prev, statusMessage: 'Loading sources...' }));
       
       // Use Electron's desktopCapturer if available
-      if (window.electron?.getDesktopSources) {
-        const sources = await window.electron.getDesktopSources();
+      if ((window as any).electron?.getDesktopSources) {
+        const sources = await (window as any).electron.getDesktopSources();
         
         const recordingSources: RecordingSource[] = sources.map((source: any) => ({
           id: source.id,
@@ -242,6 +387,86 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
   }, []);
   
   /**
+   * Enumerate available media devices (webcams and microphones)
+   */
+  const enumerateDevices = useCallback(async () => {
+    try {
+      setRecording(prev => ({ ...prev, statusMessage: 'Loading devices...' }));
+      
+      // Request permissions first to get device labels
+      if ((window as any).electron?.requestMediaAccess) {
+        await (window as any).electron.requestMediaAccess('camera');
+        await (window as any).electron.requestMediaAccess('microphone');
+      }
+      
+      // First, get initial permission to enumerate devices with labels
+      try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        tempStream.getTracks().forEach(track => track.stop());
+      } catch (err) {
+        console.warn('Could not get initial stream for device enumeration:', err);
+      }
+      
+      // Now enumerate devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      
+      const videoDevices: MediaDeviceInfo[] = devices
+        .filter(d => d.kind === 'videoinput')
+        .map(d => ({
+          deviceId: d.deviceId,
+          kind: 'videoinput' as const,
+          label: d.label || `Camera ${d.deviceId.substring(0, 5)}`,
+          groupId: d.groupId,
+        }));
+      
+      const audioDevices: MediaDeviceInfo[] = devices
+        .filter(d => d.kind === 'audioinput')
+        .map(d => ({
+          deviceId: d.deviceId,
+          kind: 'audioinput' as const,
+          label: d.label || `Microphone ${d.deviceId.substring(0, 5)}`,
+          groupId: d.groupId,
+        }));
+      
+      setRecording(prev => ({
+        ...prev,
+        videoDevices,
+        audioDevices,
+        // Auto-select first device if none selected
+        selectedVideoDeviceId: prev.selectedVideoDeviceId || (videoDevices[0]?.deviceId ?? null),
+        selectedAudioDeviceId: prev.selectedAudioDeviceId || (audioDevices[0]?.deviceId ?? null),
+        statusMessage: null,
+      }));
+    } catch (error) {
+      console.error('Failed to enumerate devices:', error);
+      setRecording(prev => ({
+        ...prev,
+        statusMessage: 'Failed to load devices',
+      }));
+    }
+  }, []);
+  
+  /**
+   * Select a video input device
+   */
+  const selectVideoDevice = useCallback((deviceId: string) => {
+    setRecording(prev => ({
+      ...prev,
+      selectedVideoDeviceId: deviceId,
+    }));
+  }, []);
+  
+  /**
+   * Select an audio input device
+   */
+  const selectAudioDevice = useCallback((deviceId: string) => {
+    setRecording(prev => ({
+      ...prev,
+      selectedAudioDeviceId: deviceId,
+    }));
+  }, []);
+  
+  /**
    * Start recording
    */
   const startRecording = useCallback(async (mode: RecordingMode, sourceId?: string) => {
@@ -282,18 +507,76 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
         // Add audio if enabled
         if (recording.audioEnabled) {
           try {
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
-          } catch (audioError) {
-            console.warn('Audio capture failed, continuing without audio:', audioError);
+            console.log('[Recording] Requesting audio stream for screen recording...');
+            const audioConstraints: MediaTrackConstraints = recording.selectedAudioDeviceId 
+              ? { deviceId: { exact: recording.selectedAudioDeviceId } }
+              : {};
+            
+            const audioStream = await navigator.mediaDevices.getUserMedia({ 
+              video: false,
+              audio: audioConstraints 
+            });
+            audioStream.getAudioTracks().forEach(track => {
+              console.log(`[Recording] Added audio track: ${track.label}`);
+              stream.addTrack(track);
+            });
+          } catch (audioError: any) {
+            console.error('[Recording] Microphone access failed for screen recording:', audioError);
+            console.warn('[Recording] Continuing screen recording without audio...');
+            setRecording(prev => ({
+              ...prev,
+              statusMessage: 'Screen recording without audio - microphone permission denied',
+            }));
           }
         }
       } else if (mode === 'webcam') {
-        // Webcam recording
+        // Webcam recording with device selection
+        // Get video and audio separately so mic failure doesn't block video
+        const videoConstraints: MediaTrackConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        };
+        
+        // Use selected video device if available
+        if (recording.selectedVideoDeviceId) {
+          videoConstraints.deviceId = { exact: recording.selectedVideoDeviceId };
+        }
+        
+        // Get video stream first
+        console.log('[Recording] Requesting video stream...');
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: recording.audioEnabled,
+          video: videoConstraints,
+          audio: false, // Get audio separately
         });
+        
+        // Add audio if enabled (with better error handling)
+        if (recording.audioEnabled) {
+          try {
+            console.log('[Recording] Requesting audio stream...');
+            const audioConstraints: MediaTrackConstraints = recording.selectedAudioDeviceId 
+              ? { deviceId: { exact: recording.selectedAudioDeviceId } }
+              : {};
+            
+            const audioStream = await navigator.mediaDevices.getUserMedia({
+              video: false,
+              audio: audioConstraints,
+            });
+            
+            // Add audio tracks to main stream
+            audioStream.getAudioTracks().forEach(track => {
+              console.log(`[Recording] Added audio track: ${track.label}`);
+              stream.addTrack(track);
+            });
+          } catch (audioError: any) {
+            console.error('[Recording] Microphone access failed during recording:', audioError);
+            console.warn('[Recording] Continuing recording without audio...');
+            // Continue without audio - video recording will work
+            setRecording(prev => ({
+              ...prev,
+              statusMessage: 'Recording without audio - microphone permission denied',
+            }));
+          }
+        }
       } else {
         // PiP mode (screen + webcam)
         const screenConstraints = {
@@ -320,11 +603,27 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           });
         }
         
-        // Try to add webcam
+        // Try to add webcam with device selection
         try {
+          const webcamVideoConstraints: MediaTrackConstraints = {
+            width: { ideal: 320 },
+            height: { ideal: 240 },
+          };
+          
+          // Use selected video device if available
+          if (recording.selectedVideoDeviceId) {
+            webcamVideoConstraints.deviceId = { exact: recording.selectedVideoDeviceId };
+          }
+          
+          const webcamAudioConstraints: MediaTrackConstraints | boolean = recording.audioEnabled
+            ? (recording.selectedAudioDeviceId 
+                ? { deviceId: { exact: recording.selectedAudioDeviceId } }
+                : true)
+            : false;
+          
           const webcamStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 320 }, height: { ideal: 240 } },
-            audio: recording.audioEnabled,
+            video: webcamVideoConstraints,
+            audio: webcamAudioConstraints,
           });
           webcamStream.getTracks().forEach(track => stream.addTrack(track));
         } catch (webcamError) {
@@ -332,7 +631,10 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           // Add audio if enabled and webcam didn't provide it
           if (recording.audioEnabled) {
             try {
-              const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              const audioConstraints: MediaTrackConstraints | boolean = recording.selectedAudioDeviceId
+                ? { deviceId: { exact: recording.selectedAudioDeviceId } }
+                : true;
+              const audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
               audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
             } catch (audioError) {
               console.warn('Audio capture failed:', audioError);
@@ -416,7 +718,7 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
         
         try {
           // Save recording via IPC with duration metadata
-          const filePath = await window.electron.saveRecording(blob, capturedDuration);
+          const filePath = await (window as any).electron.saveRecording(blob, capturedDuration);
           
           setRecording(prev => ({
             ...prev,
@@ -506,6 +808,9 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       requestPermissions,
       getAvailableSources,
       selectSource,
+      enumerateDevices,
+      selectVideoDevice,
+      selectAudioDevice,
       startRecording,
       stopRecording,
       cancelRecording,
@@ -517,6 +822,9 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       requestPermissions,
       getAvailableSources,
       selectSource,
+      enumerateDevices,
+      selectVideoDevice,
+      selectAudioDevice,
       startRecording,
       stopRecording,
       cancelRecording,
