@@ -56,6 +56,24 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     
     return { clip, timelineClip };
   }, [timeline.playhead, timeline.clips, mediaClips]);
+
+  /**
+   * Find the next clip after the given playhead position
+   */
+  const getNextClip = useCallback((playhead: number) => {
+    // Find all clips that start after the playhead, then get the earliest one
+    const futureClips = timeline.clips
+      .filter(tc => tc.startTime > playhead)
+      .sort((a, b) => a.startTime - b.startTime);
+    
+    if (futureClips.length === 0) return null;
+    
+    const timelineClip = futureClips[0];
+    const clip = mediaClips.find(c => c.id === timelineClip.clipId);
+    if (!clip) return null;
+    
+    return { clip, timelineClip };
+  }, [timeline.clips, mediaClips]);
   
   /**
    * Update video source when clip changes
@@ -133,7 +151,14 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     if (Math.abs(video.currentTime - timeInClip) > 0.1) {
       video.currentTime = timeInClip;
     }
-  }, [timeline.playhead, getCurrentClip, videoBlobUrl]);
+    
+    // If we're playing and video is paused, start it (in case we just entered a clip from blank area)
+    if (timeline.isPlaying && video.paused && video.readyState >= 2) {
+      video.play().catch(err => {
+        console.error('Failed to start video playback:', err);
+      });
+    }
+  }, [timeline.playhead, timeline.isPlaying, getCurrentClip, videoBlobUrl]);
   
   /**
    * Handle video loaded metadata
@@ -153,53 +178,97 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
    * Handle play/pause
    */
   const handlePlayPause = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    
     if (timeline.isPlaying) {
-      video.pause();
+      // Pause playback
+      const video = videoRef.current;
+      if (video) {
+        video.pause();
+      }
       setPlaying(false);
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     } else {
-      video.play();
+      // Start playback
+      // If we're at the end of the timeline, reset to beginning
+      if (timeline.playhead >= timeline.duration && timeline.duration > 0) {
+        setPlayhead(0);
+      }
+      
+      // Check if we're in a clip - if so, start video playback
+      const current = getCurrentClip();
+      const video = videoRef.current;
+      
+      if (current && video && video.readyState >= 2) {
+        // We're in a clip with a loaded video - play it
+        video.play();
+      }
+      // If we're in a blank area, the updatePlayhead effect will handle advancing the playhead
       setPlaying(true);
     }
-  }, [timeline.isPlaying, setPlaying]);
+  }, [timeline.isPlaying, timeline.playhead, timeline.duration, getCurrentClip, setPlaying, setPlayhead]);
   
   /**
    * Update playhead during playback
    */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !timeline.isPlaying) return;
+    if (!timeline.isPlaying) return;
+    
+    let lastUpdateTime = performance.now();
     
     const updatePlayhead = () => {
+      const now = performance.now();
+      const deltaTime = (now - lastUpdateTime) / 1000; // Convert to seconds
+      lastUpdateTime = now;
+      
       const current = getCurrentClip();
-      if (!current) {
-        setPlaying(false);
-        return;
-      }
       
-      // Calculate timeline position from video time
-      const timelinePosition = current.timelineClip.startTime + (video.currentTime - current.timelineClip.inPoint);
-      
-      // Check if we've reached the end of the clip
-      if (video.currentTime >= current.timelineClip.outPoint) {
-        // Move to next clip or stop
-        const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+      if (current && video && video.readyState >= 2) {
+        // We're in a clip - sync with video playback
+        const timelinePosition = current.timelineClip.startTime + (video.currentTime - current.timelineClip.inPoint);
         
-        if (nextPlayhead >= timeline.duration) {
-          // End of timeline
-          setPlayhead(timeline.duration);
+        // Check if we've reached the end of the clip
+        if (video.currentTime >= current.timelineClip.outPoint) {
+          // Move to next clip or blank area (don't pause, just move forward)
+          const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+          
+          if (nextPlayhead >= timeline.duration) {
+            // End of timeline - pause here
+            setPlayhead(timeline.duration);
+            setPlaying(false);
+            return;
+          }
+          
+          setPlayhead(nextPlayhead);
+        } else {
+          setPlayhead(timelinePosition);
+        }
+      } else {
+        // We're in a blank area or video not ready - advance playhead forward
+        const nextClip = getNextClip(timeline.playhead);
+        const maxTime = timeline.duration;
+        const newPlayhead = timeline.playhead + deltaTime;
+        
+        if (nextClip) {
+          // There's a next clip - advance until we reach it
+          if (newPlayhead >= nextClip.timelineClip.startTime) {
+            // We've reached the next clip
+            setPlayhead(nextClip.timelineClip.startTime);
+            // The effect that syncs video will load the new clip
+          } else {
+            // Still in blank area, continue advancing
+            setPlayhead(Math.min(newPlayhead, nextClip.timelineClip.startTime));
+          }
+        } else if (newPlayhead >= maxTime) {
+          // Reached end of timeline
+          setPlayhead(maxTime);
           setPlaying(false);
           return;
+        } else {
+          // No next clip, advance to end
+          setPlayhead(Math.min(newPlayhead, maxTime));
         }
-        
-        setPlayhead(nextPlayhead);
-      } else {
-        setPlayhead(timelinePosition);
       }
       
       animationFrameRef.current = requestAnimationFrame(updatePlayhead);
@@ -212,14 +281,29 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [timeline.isPlaying, getCurrentClip, setPlayhead, setPlaying, timeline.duration]);
+  }, [timeline.isPlaying, timeline.playhead, timeline.duration, getCurrentClip, getNextClip, setPlayhead, setPlaying]);
   
   /**
    * Handle video ended
+   * Note: We don't pause here - the playback loop will handle moving to the next clip
    */
   const handleVideoEnded = useCallback(() => {
-    setPlaying(false);
-  }, [setPlaying]);
+    // When a video ends, immediately move playhead forward to continue playback
+    // Don't pause - let the playback loop continue to the next clip or blank area
+    const current = getCurrentClip();
+    if (current && timeline.isPlaying) {
+      const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+      
+      if (nextPlayhead < timeline.duration) {
+        // Move to next position (clip or blank area)
+        setPlayhead(nextPlayhead);
+      } else {
+        // End of timeline
+        setPlayhead(timeline.duration);
+        setPlaying(false);
+      }
+    }
+  }, [getCurrentClip, timeline.isPlaying, timeline.duration, setPlayhead, setPlaying]);
   
   return (
     <div className={`flex flex-col h-full bg-black ${className}`}>
@@ -255,8 +339,9 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
           {/* Play/Pause Button */}
           <button
             onClick={handlePlayPause}
-            disabled={!videoBlobUrl}
+            disabled={timeline.duration === 0}
             className="w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+            title={timeline.duration === 0 ? 'No clips on timeline' : timeline.isPlaying ? 'Pause' : 'Play'}
           >
             {timeline.isPlaying ? '⏸' : '▶'}
           </button>
