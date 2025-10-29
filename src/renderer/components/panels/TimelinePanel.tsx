@@ -100,9 +100,111 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         return;
       }
 
-      // Arrow keys for nudging or track movement
+      // Arrow keys for nudging, track movement, or edge snapping
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const frameDuration = 1 / 30; // Assume 30fps (1 frame = 1/30 seconds)
+
+      // Ctrl/Cmd + Left/Right: snap to nearest clip edge
+      if (e.key === 'ArrowLeft' && isCtrlOrCmd) {
+        e.preventDefault();
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (!clip) return;
+          
+          // If clip's left edge is already at 0, do nothing
+          if (clip.startTime <= 0.001) {
+            return;
+          }
+          
+          // Collect all snap candidates: clip edges on same and adjacent tracks
+          const snapCandidates: number[] = [0]; // Timeline start
+          
+          // Check same track and adjacent tracks
+          const relevantTrackIndices = [
+            clip.track,
+            clip.track > 0 ? clip.track - 1 : -1,
+            clip.track < NUM_TRACKS - 1 ? clip.track + 1 : -1,
+          ].filter(idx => idx >= 0);
+          
+          timeline.clips.forEach(otherClip => {
+            if (otherClip.id === clipId) return; // Exclude self
+            if (!relevantTrackIndices.includes(otherClip.track)) return;
+            
+            // Add other clip's left edge (startTime)
+            snapCandidates.push(otherClip.startTime);
+            // Add other clip's right edge (startTime + duration)
+            snapCandidates.push(otherClip.startTime + otherClip.duration);
+          });
+          
+          // Find nearest edge to the LEFT of current left edge
+          const currentLeftEdge = clip.startTime;
+          const leftCandidates = snapCandidates.filter(pos => pos < currentLeftEdge && pos >= 0);
+          
+          if (leftCandidates.length > 0) {
+            // Find the maximum (closest to current position but still left of it)
+            const targetEdge = Math.max(...leftCandidates);
+            updateTimelineClip(clipId, { startTime: targetEdge });
+          }
+        });
+        return;
+      }
+
+      if (e.key === 'ArrowRight' && isCtrlOrCmd) {
+        e.preventDefault();
+        timeline.selectedClips.forEach(clipId => {
+          const clip = timeline.clips.find(c => c.id === clipId);
+          if (!clip) return;
+          
+          const clipRightEdge = clip.startTime + clip.duration;
+          
+          // If clip's right edge is already at timeline end, do nothing
+          if (clipRightEdge >= timeline.duration - 0.001) {
+            return;
+          }
+          
+          // Collect all snap candidates: clip edges on same and adjacent tracks
+          const snapCandidates: number[] = [timeline.duration]; // Timeline end
+          
+          // Check same track and adjacent tracks
+          const relevantTrackIndices = [
+            clip.track,
+            clip.track > 0 ? clip.track - 1 : -1,
+            clip.track < NUM_TRACKS - 1 ? clip.track + 1 : -1,
+          ].filter(idx => idx >= 0);
+          
+          timeline.clips.forEach(otherClip => {
+            if (otherClip.id === clipId) return; // Exclude self
+            if (!relevantTrackIndices.includes(otherClip.track)) return;
+            
+            // Add other clip's left edge (startTime)
+            snapCandidates.push(otherClip.startTime);
+            // Add other clip's right edge (startTime + duration)
+            snapCandidates.push(otherClip.startTime + otherClip.duration);
+          });
+          
+          // Find candidates to the right of current right edge
+          const rightCandidates = snapCandidates.filter(pos => pos > clipRightEdge && pos <= timeline.duration);
+          
+          if (rightCandidates.length > 0) {
+            // Find the minimum (closest to current position but right of it)
+            const targetEdge = Math.min(...rightCandidates);
+            
+            // Calculate new startTime so that clip's right edge aligns with target
+            // targetEdge = newStartTime + duration
+            // newStartTime = targetEdge - duration
+            const newStartTime = targetEdge - clip.duration;
+            
+            // Ensure we don't go below 0
+            if (newStartTime >= 0) {
+              updateTimelineClip(clipId, { startTime: newStartTime });
+            } else {
+              // If aligning right edge would push left edge below 0, align left edge to 0
+              updateTimelineClip(clipId, { startTime: 0 });
+            }
+          }
+        });
+        return;
+      }
 
       // Left/Right arrows: nudge clips horizontally
       if (e.key === 'ArrowLeft' && !isCtrlOrCmd) {
@@ -162,7 +264,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         }
       };
     }
-  }, [timeline.selectedClips, timeline.clips, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS]);
+  }, [timeline.selectedClips, timeline.clips, timeline.duration, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS]);
   
   /**
    * Handle split clip button click
@@ -221,15 +323,35 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     const stage = e.target.getStage();
     if (!stage) return;
     
-    // If clicking on the stage background (not a clip), clear selection
-    // Note: Clip clicks should have prevented bubbling with cancelBubble
-    const targetType = e.target.getType();
-    const parent = e.target.getParent();
-    const isBackground = e.target === stage || 
-                         targetType === 'Line' || 
-                         (targetType === 'Rect' && (parent === stage || parent === stage.findOne('Layer')));
+    // Check if we clicked on a clip by traversing the parent chain
+    let isClipClick = false;
+    let node: Konva.Node | null = e.target;
     
-    if (isBackground) {
+    // Traverse parent chain to see if any parent is a clip Group
+    while (node && node !== stage) {
+      if (node.getType() === 'Group') {
+        // Check if this Group represents a clip by checking its position against known clips
+        const groupX = node.x();
+        const groupY = node.y();
+        
+        // See if this group's position matches any clip's position
+        const matchesClip = timeline.clips.some(clip => {
+          const clipX = TIMELINE_PADDING + clip.startTime * timeline.zoom;
+          const clipY = RULER_HEIGHT + TRACK_PADDING + clip.track * (TRACK_HEIGHT + TRACK_PADDING);
+          // Allow small tolerance for floating point comparison
+          return Math.abs(groupX - clipX) < 0.1 && Math.abs(groupY - clipY) < 0.1;
+        });
+        
+        if (matchesClip) {
+          isClipClick = true;
+          break;
+        }
+      }
+      node = node.getParent();
+    }
+    
+    // If we didn't click on a clip, clear selection
+    if (!isClipClick) {
       setSelectedClips([]);
     }
     
@@ -241,7 +363,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
     const time = Math.max(0, x / timeline.zoom);
     
     setPlayhead(time);
-  }, [timeline.zoom, setPlayhead, setSelectedClips]);
+  }, [timeline.zoom, timeline.clips, setPlayhead, setSelectedClips]);
 
   /**
    * Handle clip click for selection
