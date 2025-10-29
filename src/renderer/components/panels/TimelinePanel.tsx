@@ -89,6 +89,89 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [timeline.selectedClips, splitClipAtPlayhead, setSelectedClips]);
 
   /**
+   * Snap a clip's left edge to the nearest edge to its left
+   * Reusable function extracted from Ctrl+Left arrow handler
+   */
+  const snapClipLeft = useCallback((clipId: string) => {
+    const clip = timeline.clips.find(c => c.id === clipId);
+    if (!clip) return;
+    
+    // If clip's left edge is already at 0, do nothing
+    if (clip.startTime <= 0.001) {
+      return;
+    }
+    
+    // Collect all snap candidates: clip edges on same and adjacent tracks
+    const snapCandidates: number[] = [0]; // Timeline start
+    
+    // Check same track and adjacent tracks
+    const relevantTrackIndices = [
+      clip.track,
+      clip.track > 0 ? clip.track - 1 : -1,
+      clip.track < NUM_TRACKS - 1 ? clip.track + 1 : -1,
+    ].filter(idx => idx >= 0);
+    
+    timeline.clips.forEach(otherClip => {
+      if (otherClip.id === clipId) return; // Exclude self
+      if (!relevantTrackIndices.includes(otherClip.track)) return;
+      
+      // Add other clip's left edge (startTime)
+      snapCandidates.push(otherClip.startTime);
+      // Add other clip's right edge (startTime + duration)
+      snapCandidates.push(otherClip.startTime + otherClip.duration);
+    });
+    
+    // Find nearest edge to the LEFT of current left edge
+    const currentLeftEdge = clip.startTime;
+    const leftCandidates = snapCandidates.filter(pos => pos < currentLeftEdge && pos >= 0);
+    
+    if (leftCandidates.length > 0) {
+      // Find the maximum (closest to current position but still left of it)
+      const targetEdge = Math.max(...leftCandidates);
+      updateTimelineClip(clipId, { startTime: targetEdge });
+    }
+  }, [timeline.clips, updateTimelineClip, NUM_TRACKS]);
+
+  /**
+   * Compress clips on a track by removing gaps (sequential processing)
+   * Processes clips left to right, keeping the first clip in place and moving subsequent clips
+   * If clipIds is provided, only compresses those specific clips (must be on the same track)
+   */
+  const compressTrack = useCallback((trackIndex: number, clipIds?: string[]) => {
+    // Get clips on this track
+    let trackClips = timeline.clips.filter(clip => clip.track === trackIndex);
+    
+    // If specific clip IDs provided, filter to only those clips
+    if (clipIds && clipIds.length > 0) {
+      trackClips = trackClips.filter(clip => clipIds.includes(clip.id));
+    }
+    
+    // Sort by startTime (left to right)
+    trackClips.sort((a, b) => a.startTime - b.startTime);
+    
+    if (trackClips.length === 0) return;
+    if (trackClips.length === 1) return; // Only one clip, nothing to compress
+    
+    // Keep first clip in place, track where it ends
+    const firstClip = trackClips[0];
+    let currentEndTime = firstClip.startTime + firstClip.duration;
+    
+    // Process subsequent clips, placing them right after the previous one
+    for (let i = 1; i < trackClips.length; i++) {
+      const clip = trackClips[i];
+      
+      // Calculate where this clip should start (right after previous clip ends)
+      const newStartTime = currentEndTime;
+      
+      // Update the clip
+      updateTimelineClip(clip.id, { startTime: newStartTime });
+      
+      // Update current end time for next clip
+      currentEndTime = newStartTime + clip.duration;
+    }
+  }, [timeline.clips, updateTimelineClip]);
+
+  /**
    * Handle keyboard events for clip manipulation
    */
   useEffect(() => {
@@ -127,6 +210,42 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         return;
       }
 
+      // 'd' key: compress selected clips (remove gaps)
+      // Only works if there are selected clips
+      // Groups selected clips by track and compresses each group separately
+      if (e.key === 'd' && !isCtrlOrCmd) {
+        e.preventDefault();
+        if (timeline.selectedClips.length > 0) {
+          // Group selected clips by track
+          const clipsByTrack = new Map<number, string[]>();
+          timeline.selectedClips.forEach(clipId => {
+            const clip = timeline.clips.find(c => c.id === clipId);
+            if (clip) {
+              if (!clipsByTrack.has(clip.track)) {
+                clipsByTrack.set(clip.track, []);
+              }
+              clipsByTrack.get(clip.track)!.push(clipId);
+            }
+          });
+          
+          // Compress each track's selected clips separately
+          clipsByTrack.forEach((clipIds, trackIndex) => {
+            compressTrack(trackIndex, clipIds);
+          });
+        }
+        return;
+      }
+
+      // Ctrl+D: compress all clips on all tracks (remove gaps)
+      if (e.key === 'd' && isCtrlOrCmd) {
+        e.preventDefault();
+        // Compress all tracks
+        for (let trackIndex = 0; trackIndex < NUM_TRACKS; trackIndex++) {
+          compressTrack(trackIndex);
+        }
+        return;
+      }
+
       // No selected clips, nothing to do (for other operations)
       if (timeline.selectedClips.length === 0) {
         return;
@@ -148,43 +267,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
       if (e.key === 'ArrowLeft' && isCtrlOrCmd) {
         e.preventDefault();
         timeline.selectedClips.forEach(clipId => {
-          const clip = timeline.clips.find(c => c.id === clipId);
-          if (!clip) return;
-          
-          // If clip's left edge is already at 0, do nothing
-          if (clip.startTime <= 0.001) {
-            return;
-          }
-          
-          // Collect all snap candidates: clip edges on same and adjacent tracks
-          const snapCandidates: number[] = [0]; // Timeline start
-          
-          // Check same track and adjacent tracks
-          const relevantTrackIndices = [
-            clip.track,
-            clip.track > 0 ? clip.track - 1 : -1,
-            clip.track < NUM_TRACKS - 1 ? clip.track + 1 : -1,
-          ].filter(idx => idx >= 0);
-          
-          timeline.clips.forEach(otherClip => {
-            if (otherClip.id === clipId) return; // Exclude self
-            if (!relevantTrackIndices.includes(otherClip.track)) return;
-            
-            // Add other clip's left edge (startTime)
-            snapCandidates.push(otherClip.startTime);
-            // Add other clip's right edge (startTime + duration)
-            snapCandidates.push(otherClip.startTime + otherClip.duration);
-          });
-          
-          // Find nearest edge to the LEFT of current left edge
-          const currentLeftEdge = clip.startTime;
-          const leftCandidates = snapCandidates.filter(pos => pos < currentLeftEdge && pos >= 0);
-          
-          if (leftCandidates.length > 0) {
-            // Find the maximum (closest to current position but still left of it)
-            const targetEdge = Math.max(...leftCandidates);
-            updateTimelineClip(clipId, { startTime: targetEdge });
-          }
+          snapClipLeft(clipId);
         });
         return;
       }
@@ -304,7 +387,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         }
       };
     }
-  }, [timeline.selectedClips, timeline.clips, timeline.duration, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS, handleSplitClip, splitAllClipsAtPlayhead, setSelectedClips]);
+  }, [timeline.selectedClips, timeline.clips, timeline.duration, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS, handleSplitClip, splitAllClipsAtPlayhead, setSelectedClips, snapClipLeft, compressTrack]);
   
   /**
    * Handle zoom in
