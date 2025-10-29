@@ -33,7 +33,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   const { timeline, setPlayhead, setPlaying } = useTimeline();
   const { clips: mediaClips } = useMedia();
   const [isLoading, setIsLoading] = useState(false);
-  const [currentClipPath, setCurrentClipPath] = useState<string | null>(null);
+  const [currentTimelineClipId, setCurrentTimelineClipId] = useState<string | null>(null);
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   
@@ -112,23 +112,27 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   
   /**
    * Update video source when clip changes
+   * Tracks timelineClip.id to ensure reload when switching clips (even same file, different trim)
    */
   useEffect(() => {
     const current = getCurrentClip();
     
     if (!current) {
       // Clean up old blob URL if we created it
-      if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
+      if (videoBlobUrl && currentTimelineClipId) {
         URL.revokeObjectURL(videoBlobUrl);
       }
       setVideoBlobUrl(null);
-      setCurrentClipPath(null);
+      setCurrentTimelineClipId(null);
       return;
     }
     
-    if (current.clip.filePath !== currentClipPath) {
+    const { timelineClip } = current;
+    
+    // Trigger reload if we're showing a *different timeline clip*
+    if (timelineClip.id !== currentTimelineClipId) {
       setIsLoading(true);
-      setCurrentClipPath(current.clip.filePath);
+      setCurrentTimelineClipId(timelineClip.id);
       
       // Always load via IPC for consistent behavior
       // This handles both real file paths and will error gracefully for invalid blob URLs
@@ -142,8 +146,8 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
             return;
           }
           
-          // Clean up old blob URL if we created it
-          if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
+          // Revoke previous blob
+          if (videoBlobUrl) {
             URL.revokeObjectURL(videoBlobUrl);
           }
           
@@ -161,18 +165,18 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
           setIsLoading(false);
         });
     }
-  }, [getCurrentClip, currentClipPath, videoBlobUrl]);
+  }, [getCurrentClip, currentTimelineClipId, videoBlobUrl]);
   
   /**
    * Cleanup blob URL on unmount (only if we created it)
    */
   useEffect(() => {
     return () => {
-      if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
+      if (videoBlobUrl && currentTimelineClipId) {
         URL.revokeObjectURL(videoBlobUrl);
       }
     };
-  }, [videoBlobUrl, currentClipPath]);
+  }, [videoBlobUrl, currentTimelineClipId]);
   
   /**
    * Sync video currentTime with playhead
@@ -199,6 +203,32 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       });
     }
   }, [timeline.playhead, timeline.isPlaying, getCurrentClip, videoBlobUrl]);
+  
+  /**
+   * Force video seek & play when clip changes mid-playback
+   * This ensures smooth transitions when switching between clips on different tracks
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    const current = getCurrentClip();
+    if (!video || !current || !videoBlobUrl) return;
+    
+    const timeInClip = timeline.playhead - current.timelineClip.startTime + current.timelineClip.inPoint;
+    
+    // If we're within the clip's in/out point range
+    if (timeInClip >= current.timelineClip.inPoint && timeInClip <= current.timelineClip.outPoint) {
+      // Seek if time difference is significant
+      if (Math.abs(video.currentTime - timeInClip) > 0.05) {
+        video.currentTime = timeInClip;
+      }
+      // Ensure playback continues if we're supposed to be playing
+      if (timeline.isPlaying && video.paused && video.readyState >= 2) {
+        video.play().catch(() => {
+          // Silently handle play errors during transitions
+        });
+      }
+    }
+  }, [timeline.playhead, getCurrentClip, videoBlobUrl, timeline.isPlaying]);
   
   /**
    * Handle video loaded metadata
@@ -382,23 +412,20 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   
   /**
    * Handle video ended
-   * Note: We don't pause here - the playback loop will handle moving to the next clip
+   * Force a playhead jump and let the system re-evaluate getCurrentClip()
    */
   const handleVideoEnded = useCallback(() => {
-    // When a video ends, immediately move playhead forward to continue playback
-    // Don't pause - let the playback loop continue to the next clip or blank area
     const current = getCurrentClip();
-    if (current && timeline.isPlaying) {
-      const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
-      
-      if (nextPlayhead < timeline.duration) {
-        // Move to next position (clip or blank area)
-        setPlayhead(nextPlayhead);
-      } else {
-        // End of timeline
-        setPlayhead(timeline.duration);
-        setPlaying(false);
-      }
+    if (!current || !timeline.isPlaying) return;
+    
+    const nextPlayhead = current.timelineClip.startTime + current.timelineClip.duration;
+    
+    // This will trigger getCurrentClip() to return new clip
+    setPlayhead(nextPlayhead);
+    
+    // Optional: if nextPlayhead exceeds duration, stop
+    if (nextPlayhead >= timeline.duration) {
+      setPlaying(false);
     }
   }, [getCurrentClip, timeline.isPlaying, timeline.duration, setPlayhead, setPlaying]);
   
@@ -415,6 +442,15 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
               onLoadedMetadata={handleLoadedMetadata}
               onEnded={handleVideoEnded}
             />
+            {/* Debug: Track and Clip ID Indicator */}
+            {(() => {
+              const current = getCurrentClip();
+              return current ? (
+                <div className="absolute top-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-xs">
+                  Track {current.timelineClip.track + 1} | Clip ID: {current.timelineClip.id}
+                </div>
+              ) : null;
+            })()}
             {isLoading && (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80">
                 <div className="text-white">Loading...</div>
