@@ -99,7 +99,7 @@ export async function exportTimeline(
     
     // Get output path from user
     const defaultFileName = options.fileName || 'exported-video.mp4';
-    const outputPath = await window.electron.saveProjectDialog();
+    const outputPath = await window.electron.exportVideoDialog(defaultFileName);
     
     if (!outputPath) {
       throw new Error('Export cancelled');

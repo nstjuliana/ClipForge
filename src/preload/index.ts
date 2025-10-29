@@ -31,6 +31,15 @@ const electronAPI = {
   },
 
   /**
+   * Opens a save dialog for exporting video files
+   * @param defaultFileName - Optional default file name
+   * @returns Promise resolving to selected save path or null
+   */
+  exportVideoDialog: (defaultFileName?: string): Promise<string | null> => {
+    return ipcRenderer.invoke('file:export-video-dialog', defaultFileName);
+  },
+
+  /**
    * Opens a dialog for selecting an existing project
    * @returns Promise resolving to selected file path or null
    */

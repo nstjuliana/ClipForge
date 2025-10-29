@@ -65,6 +65,31 @@ export function registerIPCHandlers(): void {
   });
 
   /**
+   * Handle export video save dialog
+   * Opens a save dialog for exporting video files
+   * 
+   * @param _event - IPC event
+   * @param defaultFileName - Default file name to suggest
+   * @returns Selected save path or null if canceled
+   */
+  ipcMain.handle('file:export-video-dialog', async (_event, defaultFileName?: string) => {
+    const result = await dialog.showSaveDialog({
+      filters: [
+        { name: 'MP4 Video', extensions: ['mp4'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      defaultPath: defaultFileName || 'exported-video.mp4',
+      title: 'Export Video'
+    });
+
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+
+    return result.filePath;
+  });
+
+  /**
    * Handle project open dialog
    * Opens a dialog for selecting an existing project file
    * 
