@@ -103,7 +103,8 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         clips,
         timeline.clips,
         { ...options, fileName },
-        (p) => setProgress(p)
+        (p) => setProgress(p),
+        timeline.duration
       );
       
       console.log('Video exported to:', outputPath);

@@ -69,6 +69,7 @@ export async function loadFFmpeg(): Promise<void> {
  * @param timelineClips - Array of timeline clips with trim and position info
  * @param options - Export options
  * @param onProgress - Progress callback (0-100)
+ * @param timelineDuration - Total timeline duration (for gaps)
  * @returns Promise resolving to output file path
  * @throws Error if export fails
  */
@@ -76,7 +77,8 @@ export async function exportTimeline(
   clips: Clip[],
   timelineClips: TimelineClip[],
   options: ExportOptions = {},
-  onProgress?: ExportProgressCallback
+  onProgress?: ExportProgressCallback,
+  timelineDuration?: number
 ): Promise<string> {
   try {
     // Prepare timeline clips with file paths
@@ -121,7 +123,7 @@ export async function exportTimeline(
       format: options.format || 'mp4',
       bitrate: options.bitrate,
       frameRate: options.frameRate,
-    });
+    }, timelineDuration);
     
     if (!result.success) {
       throw new Error(result.error || 'Export failed');

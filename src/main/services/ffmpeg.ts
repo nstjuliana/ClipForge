@@ -92,6 +92,71 @@ interface ExportResult {
 type ProgressCallback = (progress: number) => void;
 
 /**
+ * Segment type for export (either a clip or a gap/black screen)
+ */
+interface ExportSegment {
+  type: 'clip' | 'gap';
+  startTime: number;
+  duration: number;
+  clipPath?: string; // Only for 'clip' type
+  inPoint?: number; // Only for 'clip' type
+  outPoint?: number; // Only for 'clip' type
+}
+
+/**
+ * Generates a black screen video segment
+ * 
+ * Creates a video file with black frames for the specified duration.
+ * Used to fill gaps in the timeline export.
+ * 
+ * @param duration - Duration in seconds
+ * @param outputPath - Path for output file
+ * @param options - Export options (resolution, frame rate)
+ * @returns Promise resolving to export result
+ */
+function generateBlackScreen(
+  duration: number,
+  outputPath: string,
+  options: ExportOptions = {}
+): Promise<ExportResult> {
+  return new Promise((resolve) => {
+    const resolution = options.resolution || [1920, 1080]; // Default to 1080p
+    const frameRate = options.frameRate || 30; // Default to 30fps
+    
+    // Create black screen using color filter with lavfi
+    // Format: color=black:size=WxH:duration=D:rate=R
+    const colorInput = `color=black:size=${resolution[0]}x${resolution[1]}:duration=${duration}:rate=${frameRate}`;
+    // Create silent audio using anullsrc
+    const audioInput = `anullsrc=channel_layout=stereo:sample_rate=48000`;
+    
+    let command = ffmpeg()
+      .input(colorInput)
+      .inputOptions(['-f lavfi'])
+      .input(audioInput)
+      .inputOptions(['-f lavfi', `-t ${duration}`])
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .audioBitrate('128k')
+      .outputOptions([
+        '-preset fast',
+        '-crf 23',
+        '-pix_fmt yuv420p', // Ensure compatibility
+        '-shortest', // Match shortest input (duration)
+      ]);
+    
+    command
+      .on('end', () => {
+        resolve({ success: true, outputPath });
+      })
+      .on('error', (err: Error) => {
+        console.error('Black screen generation error:', err);
+        resolve({ success: false, error: err.message });
+      })
+      .save(outputPath);
+  });
+}
+
+/**
  * Exports a single clip with trim points
  * 
  * @param clipPath - Path to source video file
@@ -153,60 +218,160 @@ export function exportSingleClip(
 /**
  * Exports timeline with multiple clips
  * 
- * Concatenates clips in sequence and exports as single video.
+ * Concatenates clips in sequence with black screens filling gaps.
  * 
  * @param clips - Array of timeline clips with file paths
  * @param outputPath - Path for output file
  * @param options - Export options
  * @param onProgress - Progress callback
+ * @param timelineDuration - Total duration of timeline (for gaps at end)
  * @returns Promise resolving to export result
  */
 export async function exportTimeline(
   clips: TimelineClipData[],
   outputPath: string,
   options: ExportOptions = {},
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  timelineDuration?: number
 ): Promise<ExportResult> {
   try {
     // Sort clips by start time
     const sortedClips = [...clips].sort((a, b) => a.startTime - b.startTime);
     
-    // If single clip, use simple export
-    if (sortedClips.length === 1) {
+    // If single clip with no gaps, use simple export
+    if (sortedClips.length === 1 && sortedClips[0].startTime === 0) {
       const clip = sortedClips[0];
-      return await exportSingleClip(
-        clip.filePath,
-        clip.inPoint,
-        clip.outPoint,
-        outputPath,
-        options,
-        onProgress
-      );
+      const clipEndTime = clip.startTime + clip.duration;
+      const finalDuration = timelineDuration || clipEndTime;
+      
+      // If clip fills entire timeline, no gaps
+      if (Math.abs(clipEndTime - finalDuration) < 0.01) {
+        return await exportSingleClip(
+          clip.filePath,
+          clip.inPoint,
+          clip.outPoint,
+          outputPath,
+          options,
+          onProgress
+        );
+      }
     }
     
-    // For multiple clips, process each and concatenate
+    // Build segments array (clips + gaps)
+    const segments: ExportSegment[] = [];
+    const resolution = options.resolution || [1920, 1080];
+    const finalDuration = timelineDuration || (sortedClips.length > 0 
+      ? Math.max(...sortedClips.map(c => c.startTime + c.duration))
+      : 0);
+    
+    // Add gap before first clip if needed
+    if (sortedClips.length > 0 && sortedClips[0].startTime > 0) {
+      segments.push({
+        type: 'gap',
+        startTime: 0,
+        duration: sortedClips[0].startTime,
+      });
+    }
+    
+    // Add clips and gaps between them
+    for (let i = 0; i < sortedClips.length; i++) {
+      const clip = sortedClips[i];
+      const clipEndTime = clip.startTime + clip.duration;
+      
+      // Add the clip
+      segments.push({
+        type: 'clip',
+        startTime: clip.startTime,
+        duration: clip.duration,
+        clipPath: clip.filePath,
+        inPoint: clip.inPoint,
+        outPoint: clip.outPoint,
+      });
+      
+      // Check for gap after this clip
+      if (i < sortedClips.length - 1) {
+        const nextClip = sortedClips[i + 1];
+        const gap = nextClip.startTime - clipEndTime;
+        if (gap > 0.01) { // Only add gap if > 10ms
+          segments.push({
+            type: 'gap',
+            startTime: clipEndTime,
+            duration: gap,
+          });
+        }
+      }
+    }
+    
+    // Add gap after last clip if needed
+    if (sortedClips.length > 0) {
+      const lastClip = sortedClips[sortedClips.length - 1];
+      const lastClipEndTime = lastClip.startTime + lastClip.duration;
+      const finalGap = finalDuration - lastClipEndTime;
+      if (finalGap > 0.01) {
+        segments.push({
+          type: 'gap',
+          startTime: lastClipEndTime,
+          duration: finalGap,
+        });
+      }
+    } else if (finalDuration > 0) {
+      // No clips, but timeline has duration - create all black
+      segments.push({
+        type: 'gap',
+        startTime: 0,
+        duration: finalDuration,
+      });
+    }
+    
+    // If no segments, return error
+    if (segments.length === 0) {
+      return {
+        success: false,
+        error: 'No content to export',
+      };
+    }
+    
+    // For multiple segments, process each and concatenate
     const tempDir = path.join(process.cwd(), '.temp-export-' + randomUUID());
     await fs.mkdir(tempDir, { recursive: true });
     
     const processedFiles: string[] = [];
+    const totalSegments = segments.length;
     
-    // Process each clip
-    for (let i = 0; i < sortedClips.length; i++) {
-      const clip = sortedClips[i];
-      const tempOutput = path.join(tempDir, `clip_${i}.mp4`);
+    // Process each segment (clip or gap)
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const tempOutput = path.join(tempDir, `segment_${i}.mp4`);
       
-      const result = await exportSingleClip(
-        clip.filePath,
-        clip.inPoint,
-        clip.outPoint,
-        tempOutput,
-        options,
-        (clipProgress) => {
-          // Calculate overall progress
-          const overallProgress = ((i / sortedClips.length) * 100) + (clipProgress / sortedClips.length);
-          onProgress?.(Math.min(overallProgress, 99));
-        }
-      );
+      let result: ExportResult;
+      
+      if (segment.type === 'clip' && segment.clipPath && segment.inPoint !== undefined && segment.outPoint !== undefined) {
+        // Export clip
+        result = await exportSingleClip(
+          segment.clipPath,
+          segment.inPoint,
+          segment.outPoint,
+          tempOutput,
+          options,
+          (clipProgress) => {
+            // Calculate overall progress
+            const overallProgress = ((i / totalSegments) * 100) + (clipProgress / totalSegments);
+            onProgress?.(Math.min(overallProgress, 99));
+          }
+        );
+      } else if (segment.type === 'gap') {
+        // Generate black screen
+        result = await generateBlackScreen(
+          segment.duration,
+          tempOutput,
+          options
+        );
+        // Update progress for gap generation
+        const overallProgress = ((i / totalSegments) * 100) + (50 / totalSegments);
+        onProgress?.(Math.min(overallProgress, 99));
+      } else {
+        result = { success: false, error: 'Invalid segment type' };
+      }
       
       if (!result.success) {
         // Cleanup and return error
@@ -222,7 +387,7 @@ export async function exportTimeline(
     const concatContent = processedFiles.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
     await fs.writeFile(concatListPath, concatContent);
     
-    // Concatenate all clips
+    // Concatenate all segments
     await new Promise<void>((resolve, reject) => {
       let command = ffmpeg()
         .input(concatListPath)

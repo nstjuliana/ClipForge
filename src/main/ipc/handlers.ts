@@ -145,13 +145,14 @@ export function registerIPCHandlers(): void {
    * @param clips - Timeline clips with file paths
    * @param outputPath - Path for output file
    * @param options - Export options
+   * @param timelineDuration - Total timeline duration (for gaps)
    * @returns Result of export operation
    */
-  ipcMain.handle('video:export', async (event, clips: any[], outputPath: string, options: any) => {
+  ipcMain.handle('video:export', async (event, clips: any[], outputPath: string, options: any, timelineDuration?: number) => {
     return await exportTimeline(clips, outputPath, options, (progress) => {
       // Send progress updates back to renderer
       event.sender.send('video:export-progress', progress);
-    });
+    }, timelineDuration);
   });
 
   /**

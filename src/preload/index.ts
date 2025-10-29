@@ -71,10 +71,11 @@ const electronAPI = {
    * @param clips - Timeline clips with file paths
    * @param outputPath - Path for output file
    * @param options - Export options
+   * @param timelineDuration - Total timeline duration (for gaps)
    * @returns Promise resolving to export result
    */
-  exportVideo: (clips: unknown[], outputPath: string, options: unknown): Promise<{ success: boolean; outputPath?: string; error?: string }> => {
-    return ipcRenderer.invoke('video:export', clips, outputPath, options);
+  exportVideo: (clips: unknown[], outputPath: string, options: unknown, timelineDuration?: number): Promise<{ success: boolean; outputPath?: string; error?: string }> => {
+    return ipcRenderer.invoke('video:export', clips, outputPath, options, timelineDuration);
   },
 
   /**
