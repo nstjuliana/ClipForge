@@ -1,0 +1,75 @@
+# Electron Builder Configuration
+# 
+# Configures packaging settings for ClipForge desktop app
+
+appId: com.clipforge.app
+productName: ClipForge
+copyright: Copyright © 2024 ClipForge
+
+# Build configuration
+directories:
+  output: out
+  buildResources: assets
+
+# Files to include in the build
+files:
+  - dist-electron/**/*
+  - package.json
+  - node_modules/**/*
+
+# File associations
+fileAssociations:
+  - ext: clipforge
+    name: ClipForge Project
+    description: ClipForge Video Project
+    role: Editor
+
+# Windows configuration
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+# Windows installer configuration
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ClipForge
+
+# macOS configuration
+mac:
+  target:
+    - dmg
+    - zip
+  icon: assets/icon.icns
+  category: public.app-category.video
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# macOS DMG configuration
+dmg:
+  title: ${productName} ${version}
+  icon: assets/icon.icns
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# Linux configuration
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: assets/icon.png
+  category: Video
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# Publish configuration (for future use)
+publish: null
+

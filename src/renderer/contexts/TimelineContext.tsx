@@ -1,0 +1,307 @@
+/**
+ * Timeline Context
+ * 
+ * Provides timeline state and operations to all components.
+ * Manages clips on the timeline, playhead position, and playback state.
+ * 
+ * @module contexts/TimelineContext
+ */
+
+import React, { createContext, useContext, useState, useMemo, useCallback, useRef } from 'react';
+import type { TimelineClip, TimelineState } from '@/types/timeline';
+import type { Clip } from '@/types/clip';
+
+/**
+ * Timeline context value type
+ * 
+ * @interface TimelineContextValue
+ */
+interface TimelineContextValue {
+  /** Timeline state */
+  timeline: TimelineState;
+  
+  /** Add a clip to the timeline */
+  addClipToTimeline: (clip: Clip, startTime?: number) => void;
+  
+  /** Remove a clip from the timeline */
+  removeTimelineClip: (timelineClipId: string) => void;
+  
+  /** Update a timeline clip */
+  updateTimelineClip: (timelineClipId: string, updates: Partial<TimelineClip>) => void;
+  
+  /** Set playhead position */
+  setPlayhead: (position: number) => void;
+  
+  /** Set playing state */
+  setPlaying: (playing: boolean) => void;
+  
+  /** Set zoom level */
+  setZoom: (zoom: number) => void;
+  
+  /** Set scroll position */
+  setScrollPosition: (position: number) => void;
+  
+  /** Select clips */
+  setSelectedClips: (clipIds: string[]) => void;
+  
+  /** Get timeline clip by ID */
+  getTimelineClip: (timelineClipId: string) => TimelineClip | undefined;
+  
+  /** Clear timeline */
+  clearTimeline: () => void;
+  
+  /** Get total timeline duration */
+  getTotalDuration: () => number;
+}
+
+/**
+ * Timeline Context
+ */
+const TimelineContext = createContext<TimelineContextValue | null>(null);
+
+/**
+ * Timeline Provider Props
+ * 
+ * @interface TimelineProviderProps
+ */
+export interface TimelineProviderProps {
+  children: React.ReactNode;
+}
+
+/**
+ * Timeline Provider Component
+ * 
+ * Provides timeline state and operations to all child components.
+ * 
+ * @component
+ */
+export function TimelineProvider({ children }: TimelineProviderProps) {
+  // Initialize timeline state
+  const [timeline, setTimeline] = useState<TimelineState>({
+    clips: [],
+    playhead: 0,
+    isPlaying: false,
+    zoom: 100, // pixels per second
+    scrollPosition: 0,
+    duration: 0,
+    selectedClips: [],
+  });
+  
+  /**
+   * Generate unique timeline clip ID
+   */
+  const generateTimelineClipId = useCallback((): string => {
+    return `timeline_clip_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }, []);
+  
+  /**
+   * Add a clip to the timeline
+   */
+  const addClipToTimeline = useCallback((clip: Clip, startTime?: number) => {
+    setTimeline(prev => {
+      // If no start time specified, place at end of timeline
+      const clipStartTime = startTime !== undefined ? startTime : prev.duration;
+      
+      const newClip: TimelineClip = {
+        id: generateTimelineClipId(),
+        clipId: clip.id,
+        startTime: clipStartTime,
+        duration: clip.duration,
+        inPoint: 0,
+        outPoint: clip.duration,
+        track: 0, // Default to track 0
+        layer: 0,
+      };
+      
+      const newClips = [...prev.clips, newClip];
+      
+      // Recalculate total duration
+      const newDuration = Math.max(
+        prev.duration,
+        clipStartTime + newClip.duration
+      );
+      
+      return {
+        ...prev,
+        clips: newClips,
+        duration: newDuration,
+      };
+    });
+  }, [generateTimelineClipId]);
+  
+  /**
+   * Remove a clip from the timeline
+   */
+  const removeTimelineClip = useCallback((timelineClipId: string) => {
+    setTimeline(prev => {
+      const newClips = prev.clips.filter(c => c.id !== timelineClipId);
+      
+      // Recalculate total duration
+      const newDuration = newClips.length > 0
+        ? Math.max(...newClips.map(c => c.startTime + c.duration))
+        : 0;
+      
+      return {
+        ...prev,
+        clips: newClips,
+        duration: newDuration,
+        selectedClips: prev.selectedClips.filter(id => id !== timelineClipId),
+      };
+    });
+  }, []);
+  
+  /**
+   * Update a timeline clip
+   */
+  const updateTimelineClip = useCallback((timelineClipId: string, updates: Partial<TimelineClip>) => {
+    setTimeline(prev => {
+      const newClips = prev.clips.map(c =>
+        c.id === timelineClipId ? { ...c, ...updates } : c
+      );
+      
+      // Recalculate total duration
+      const newDuration = newClips.length > 0
+        ? Math.max(...newClips.map(c => c.startTime + c.duration))
+        : 0;
+      
+      return {
+        ...prev,
+        clips: newClips,
+        duration: newDuration,
+      };
+    });
+  }, []);
+  
+  /**
+   * Set playhead position
+   */
+  const setPlayhead = useCallback((position: number) => {
+    setTimeline(prev => ({
+      ...prev,
+      playhead: Math.max(0, Math.min(position, prev.duration)),
+    }));
+  }, []);
+  
+  /**
+   * Set playing state
+   */
+  const setPlaying = useCallback((playing: boolean) => {
+    setTimeline(prev => ({
+      ...prev,
+      isPlaying: playing,
+    }));
+  }, []);
+  
+  /**
+   * Set zoom level
+   */
+  const setZoom = useCallback((zoom: number) => {
+    setTimeline(prev => ({
+      ...prev,
+      zoom: Math.max(10, Math.min(zoom, 1000)), // Clamp between 10 and 1000
+    }));
+  }, []);
+  
+  /**
+   * Set scroll position
+   */
+  const setScrollPosition = useCallback((position: number) => {
+    setTimeline(prev => ({
+      ...prev,
+      scrollPosition: Math.max(0, position),
+    }));
+  }, []);
+  
+  /**
+   * Set selected clips
+   */
+  const setSelectedClips = useCallback((clipIds: string[]) => {
+    setTimeline(prev => ({
+      ...prev,
+      selectedClips: clipIds,
+    }));
+  }, []);
+  
+  /**
+   * Get timeline clip by ID
+   */
+  const getTimelineClip = useCallback((timelineClipId: string): TimelineClip | undefined => {
+    return timeline.clips.find(c => c.id === timelineClipId);
+  }, [timeline.clips]);
+  
+  /**
+   * Clear timeline
+   */
+  const clearTimeline = useCallback(() => {
+    setTimeline({
+      clips: [],
+      playhead: 0,
+      isPlaying: false,
+      zoom: 100,
+      scrollPosition: 0,
+      duration: 0,
+      selectedClips: [],
+    });
+  }, []);
+  
+  /**
+   * Get total timeline duration
+   */
+  const getTotalDuration = useCallback((): number => {
+    return timeline.duration;
+  }, [timeline.duration]);
+  
+  // Memoize context value
+  const value = useMemo(
+    () => ({
+      timeline,
+      addClipToTimeline,
+      removeTimelineClip,
+      updateTimelineClip,
+      setPlayhead,
+      setPlaying,
+      setZoom,
+      setScrollPosition,
+      setSelectedClips,
+      getTimelineClip,
+      clearTimeline,
+      getTotalDuration,
+    }),
+    [
+      timeline,
+      addClipToTimeline,
+      removeTimelineClip,
+      updateTimelineClip,
+      setPlayhead,
+      setPlaying,
+      setZoom,
+      setScrollPosition,
+      setSelectedClips,
+      getTimelineClip,
+      clearTimeline,
+      getTotalDuration,
+    ]
+  );
+  
+  return <TimelineContext.Provider value={value}>{children}</TimelineContext.Provider>;
+}
+
+/**
+ * Custom hook to use Timeline Context
+ * 
+ * @returns Timeline context value
+ * @throws Error if used outside TimelineProvider
+ * 
+ * @example
+ * const { timeline, addClipToTimeline, setPlayhead } = useTimeline();
+ */
+export function useTimeline(): TimelineContextValue {
+  const context = useContext(TimelineContext);
+  
+  if (!context) {
+    throw new Error('useTimeline must be used within TimelineProvider');
+  }
+  
+  return context;
+}
+

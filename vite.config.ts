@@ -26,8 +26,14 @@ export default defineConfig({
         vite: {
           build: {
             outDir: path.resolve(__dirname, 'dist-electron/main'),
+            minify: false,
             rollupOptions: {
-              external: ['electron']
+              external: ['electron', 'path', 'fs', 'fs/promises', 'crypto', 'fluent-ffmpeg', 'ffmpeg-static', 'ffprobe-static'],
+              output: {
+                format: 'cjs',
+                entryFileNames: 'index.js',
+                exports: 'auto'
+              }
             }
           }
         }
@@ -43,7 +49,11 @@ export default defineConfig({
           build: {
             outDir: path.resolve(__dirname, 'dist-electron/preload'),
             rollupOptions: {
-              external: ['electron']
+              external: ['electron'],
+              output: {
+                format: 'cjs',
+                entryFileNames: 'index.js'
+              }
             }
           }
         }

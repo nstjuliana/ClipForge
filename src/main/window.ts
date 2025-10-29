@@ -8,11 +8,8 @@
  */
 import { BrowserWindow } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-// ES module equivalent of __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// __dirname is available in CommonJS (tsconfig.main.json compiles to CommonJS)
 
 /**
  * Creates the main application window

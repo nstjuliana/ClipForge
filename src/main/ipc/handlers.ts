@@ -7,6 +7,9 @@
  * @module main/ipc/handlers
  */
 import { ipcMain, dialog } from 'electron';
+import { saveProject, loadProject } from '../services/projectIO';
+import { exportTimeline } from '../services/ffmpeg';
+import fs from 'fs/promises';
 
 /**
  * Registers all IPC handlers
@@ -82,6 +85,72 @@ export function registerIPCHandlers(): void {
     }
 
     return result.filePaths[0];
+  });
+
+  /**
+   * Handle project save
+   * Saves project data to a file
+   * 
+   * @param _event - IPC event
+   * @param filePath - Path to save the project
+   * @param projectData - Project data to save
+   * @returns Result of save operation
+   */
+  ipcMain.handle('project:save', async (_event, filePath: string, projectData: unknown) => {
+    return await saveProject(filePath, projectData as any);
+  });
+
+  /**
+   * Handle project load
+   * Loads project data from a file
+   * 
+   * @param _event - IPC event
+   * @param filePath - Path to the project file
+   * @returns Result of load operation with project data
+   */
+  ipcMain.handle('project:load', async (_event, filePath: string) => {
+    return await loadProject(filePath);
+  });
+
+  /**
+   * Handle video export
+   * Exports timeline to video file using native FFmpeg
+   * 
+   * @param _event - IPC event
+   * @param clips - Timeline clips with file paths
+   * @param outputPath - Path for output file
+   * @param options - Export options
+   * @returns Result of export operation
+   */
+  ipcMain.handle('video:export', async (event, clips: any[], outputPath: string, options: any) => {
+    return await exportTimeline(clips, outputPath, options, (progress) => {
+      // Send progress updates back to renderer
+      event.sender.send('video:export-progress', progress);
+    });
+  });
+
+  /**
+   * Handle video blob URL request
+   * Reads video file and returns buffer to renderer for blob creation
+   * 
+   * @param _event - IPC event
+   * @param filePath - Path to video file
+   * @returns Buffer data for creating blob URL
+   */
+  ipcMain.handle('video:getBlobUrl', async (_event, filePath: string) => {
+    try {
+      // Read video file into buffer
+      const buffer = await fs.readFile(filePath);
+      
+      // Return buffer directly (Electron will handle serialization)
+      return { success: true, buffer: buffer };
+    } catch (error) {
+      console.error('Failed to read video file:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to read video file' 
+      };
+    }
   });
 }
 

@@ -7,6 +7,16 @@
  * @component
  */
 
+import React, { useState, useCallback } from 'react';
+import { MediaProvider, useMedia } from '@/contexts/MediaContext';
+import { TimelineProvider, useTimeline } from '@/contexts/TimelineContext';
+import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
+import { MediaLibraryPanel } from '@/components/panels/MediaLibraryPanel';
+import { PreviewPanel } from '@/components/panels/PreviewPanel';
+import { TimelinePanel } from '@/components/panels/TimelinePanel';
+import { ExportModal } from '@/components/modals/ExportModal';
+import type { ProjectFile } from '@/types/project';
+
 /**
  * Props for MainScreen component
  * 
@@ -18,30 +28,133 @@ export interface MainScreenProps {
 }
 
 /**
- * MainScreen Component
+ * Main Screen Content Component
  * 
- * For Phase 0, this is a stub showing the basic layout structure.
- * Full panels will be implemented in Phase 1.
+ * Inner component that has access to all contexts.
  */
-export function MainScreen({ onNavigate }: MainScreenProps) {
-  const handleBack = () => {
-    onNavigate('project-selection');
-  };
-
-  const handleImportMedia = async () => {
-    if (typeof window !== 'undefined' && window.electron) {
-      const files = await window.electron.openFileDialog();
-      if (files.length > 0) {
-        console.log('Imported files:', files);
-        // In Phase 1, this will import media to the library
-      }
+function MainScreenContent({ onNavigate }: MainScreenProps) {
+  const { clips, clearAll: clearMedia } = useMedia();
+  const { timeline, clearTimeline } = useTimeline();
+  const {
+    metadata,
+    projectFilePath,
+    setProjectFilePath,
+    hasUnsavedChanges,
+    markSaved,
+    markModified,
+    updateMetadata,
+  } = useProject();
+  
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  
+  /**
+   * Handle back navigation
+   */
+  const handleBack = useCallback(() => {
+    if (hasUnsavedChanges) {
+      const confirmed = confirm('You have unsaved changes. Are you sure you want to go back?');
+      if (!confirmed) return;
     }
-  };
-
+    onNavigate('project-selection');
+  }, [hasUnsavedChanges, onNavigate]);
+  
+  /**
+   * Handle save project
+   */
+  const handleSaveProject = useCallback(async () => {
+    try {
+      let savePath = projectFilePath;
+      
+      // If no path, show save dialog
+      if (!savePath) {
+        savePath = await window.electron.saveProjectDialog();
+        if (!savePath) return;
+      }
+      
+      // Prepare project data
+      const projectData: ProjectFile = {
+        version: '1.0.0',
+        metadata: {
+          ...metadata,
+          modifiedAt: new Date(),
+        },
+        clips: clips.map(clip => ({
+          ...clip,
+          importedAt: clip.importedAt,
+        })),
+        timeline,
+        exportSettings: {
+          format: 'mp4',
+          resolution: [1920, 1080],
+          frameRate: 30,
+          videoCodec: 'libx264',
+          videoBitrate: 5000,
+          audioCodec: 'aac',
+          audioBitrate: 128,
+        },
+      };
+      
+      // Save project
+      const result = await window.electron.saveProject(savePath, projectData);
+      
+      if (result.success) {
+        setProjectFilePath(savePath);
+        markSaved();
+        console.log('Project saved successfully');
+        alert('Project saved successfully!');
+      } else {
+        console.error('Failed to save project:', result.error);
+        alert(`Failed to save project: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Failed to save project:', error);
+      alert('Failed to save project. Please try again.');
+    }
+  }, [projectFilePath, metadata, clips, timeline, setProjectFilePath, markSaved]);
+  
+  /**
+   * Handle save as project
+   */
+  const handleSaveAsProject = useCallback(async () => {
+    try {
+      const savePath = await window.electron.saveProjectDialog();
+      if (!savePath) return;
+      
+      // Update path to null to force save as
+      setProjectFilePath(null);
+      
+      // Then save
+      await handleSaveProject();
+    } catch (error) {
+      console.error('Failed to save project:', error);
+      alert('Failed to save project. Please try again.');
+    }
+  }, [handleSaveProject, setProjectFilePath]);
+  
+  /**
+   * Handle export
+   */
+  const handleExport = useCallback(() => {
+    if (timeline.clips.length === 0) {
+      alert('No clips on timeline to export');
+      return;
+    }
+    setIsExportModalOpen(true);
+  }, [timeline.clips.length]);
+  
+  /**
+   * Mark as modified when clips or timeline changes
+   */
+  React.useEffect(() => {
+    if (clips.length > 0 || timeline.clips.length > 0) {
+      markModified();
+    }
+  }, [clips.length, timeline.clips.length, markModified]);
+  
   return (
     <div className="flex h-full w-full flex-col bg-gray-900">
       {/* Top Bar / Menu */}
-      <div className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700">
+      <div className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button
             onClick={handleBack}
@@ -49,77 +162,74 @@ export function MainScreen({ onNavigate }: MainScreenProps) {
           >
             ← Back
           </button>
-          <h1 className="text-lg font-semibold">ClipForge - Untitled Project</h1>
+          <h1 className="text-lg font-semibold">
+            ClipForge - {metadata.name}
+            {hasUnsavedChanges && <span className="text-yellow-500 ml-2">*</span>}
+          </h1>
         </div>
         
         <div className="flex items-center gap-3">
           <button
-            onClick={handleImportMedia}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+            onClick={handleSaveProject}
+            className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors text-sm"
+            title="Save Project"
           >
-            Import Media
+            💾 Save
           </button>
-          <button className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors text-sm">
-            Save Project
-          </button>
-          <button className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors text-sm">
-            Export
+          <button
+            onClick={handleExport}
+            disabled={timeline.clips.length === 0}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors text-sm disabled:bg-gray-700 disabled:cursor-not-allowed"
+            title="Export Video"
+          >
+            🎬 Export
           </button>
         </div>
       </div>
 
       {/* Main Layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Left Panel - Media Library */}
-        <div className="w-80 bg-panel-bg border-r border-panel-border p-4">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold mb-2">Media Library</h2>
-            <p className="text-sm text-gray-500">Phase 0 - Placeholder</p>
-          </div>
-          
-          <div className="flex items-center justify-center h-64 border-2 border-dashed border-gray-700 rounded-lg">
-            <div className="text-center text-gray-500">
-              <div className="text-4xl mb-2">📁</div>
-              <p className="text-sm">No media imported yet</p>
-              <button
-                onClick={handleImportMedia}
-                className="mt-3 text-sm text-blue-500 hover:text-blue-400"
-              >
-                Import files
-              </button>
-            </div>
-          </div>
+        <div className="w-80 flex-shrink-0">
+          <MediaLibraryPanel />
         </div>
 
         {/* Center - Preview and Timeline */}
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-w-0">
           {/* Preview Panel */}
-          <div className="flex-1 bg-black p-4">
-            <div className="h-full flex items-center justify-center bg-gray-900 rounded">
-              <div className="text-center text-gray-500">
-                <div className="text-6xl mb-4">🎥</div>
-                <p>Preview Panel</p>
-                <p className="text-sm mt-2">Phase 0 - Placeholder</p>
-              </div>
-            </div>
+          <div className="flex-1 min-h-0">
+            <PreviewPanel />
           </div>
 
           {/* Timeline Panel */}
-          <div className="h-64 bg-timeline-bg border-t border-gray-700 p-4">
-            <div className="mb-2">
-              <h2 className="text-sm font-semibold text-gray-400">Timeline</h2>
-            </div>
-            <div className="h-48 bg-gray-900 rounded border border-gray-700 flex items-center justify-center">
-              <div className="text-center text-gray-500">
-                <div className="text-3xl mb-2">🎞️</div>
-                <p className="text-sm">Timeline Panel</p>
-                <p className="text-xs mt-1">Phase 0 - Placeholder</p>
-              </div>
-            </div>
+          <div className="h-64 flex-shrink-0">
+            <TimelinePanel />
           </div>
         </div>
       </div>
+      
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+      />
     </div>
   );
 }
 
+/**
+ * Main Screen Component
+ * 
+ * Wraps the content with all necessary context providers.
+ */
+export function MainScreen(props: MainScreenProps) {
+  return (
+    <ProjectProvider>
+      <MediaProvider>
+        <TimelineProvider>
+          <MainScreenContent {...props} />
+        </TimelineProvider>
+      </MediaProvider>
+    </ProjectProvider>
+  );
+}

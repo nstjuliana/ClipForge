@@ -37,6 +37,45 @@ const electronAPI = {
   openProjectDialog: (): Promise<string | null> => {
     return ipcRenderer.invoke('file:open-project-dialog');
   },
+
+  /**
+   * Saves project data to a file
+   * @param filePath - Path to save the project
+   * @param projectData - Project data to save
+   * @returns Promise resolving to save result
+   */
+  saveProject: (filePath: string, projectData: unknown): Promise<{ success: boolean; data?: string; error?: string }> => {
+    return ipcRenderer.invoke('project:save', filePath, projectData);
+  },
+
+  /**
+   * Loads project data from a file
+   * @param filePath - Path to the project file
+   * @returns Promise resolving to load result with project data
+   */
+  loadProject: (filePath: string): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+    return ipcRenderer.invoke('project:load', filePath);
+  },
+
+  /**
+   * Exports timeline to video file
+   * @param clips - Timeline clips with file paths
+   * @param outputPath - Path for output file
+   * @param options - Export options
+   * @returns Promise resolving to export result
+   */
+  exportVideo: (clips: unknown[], outputPath: string, options: unknown): Promise<{ success: boolean; outputPath?: string; error?: string }> => {
+    return ipcRenderer.invoke('video:export', clips, outputPath, options);
+  },
+
+  /**
+   * Gets video buffer for creating blob URL
+   * @param filePath - Path to video file
+   * @returns Promise resolving to video buffer
+   */
+  getVideoBlobUrl: (filePath: string): Promise<{ success: boolean; buffer?: Buffer; error?: string }> => {
+    return ipcRenderer.invoke('video:getBlobUrl', filePath);
+  },
 };
 
 /**
