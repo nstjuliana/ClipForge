@@ -34,7 +34,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const timelineCanvasRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 200 });
-  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack, setSelectedClips, removeTimelineClip } = useTimeline();
+  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack, setSelectedClips, removeTimelineClip, startDragOperation, endDragOperation } = useTimeline();
   const { clips: mediaClips } = useMedia();
   
   // Check if playhead is over a clip
@@ -616,11 +616,19 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
               y: snappedY,
             };
           }}
+          onDragStart={(e: Konva.KonvaEventObject<DragEvent>) => {
+            // Only fire when the GROUP (not a handle) is dragged
+            const target = e.target;
+            if (target === e.currentTarget) {
+              startDragOperation();
+            }
+          }}
           onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
             // Only fire when the GROUP (not a handle) is dragged
             const target = e.target;
             if (target === e.currentTarget) {
               handleClipDragEnd(timelineClip.id, target.x(), target.y());
+              endDragOperation();
             }
           }}
         >
@@ -666,6 +674,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
     // Force stay in group
     const node = e.target;
     node.moveTo(node.getParent());
+    startDragOperation();
   }}
   onDragMove={(e) => {
     const node = e.target;
@@ -677,6 +686,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
     const node = e.target;
     node.x(0);
     node.y(0);
+    endDragOperation();
   }}
 />
 
@@ -698,6 +708,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
     e.cancelBubble = true;
     const node = e.target;
     node.moveTo(node.getParent());
+    startDragOperation();
   }}
   onDragMove={(e) => {
     const node = e.target;
@@ -709,6 +720,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
     const node = e.target;
     node.x(width - 8);
     node.y(0);
+    endDragOperation();
   }}
 />
         </Group>

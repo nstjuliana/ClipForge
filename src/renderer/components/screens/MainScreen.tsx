@@ -7,11 +7,12 @@
  * @component
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { MediaProvider, useMedia } from '@/contexts/MediaContext';
 import { TimelineProvider, useTimeline } from '@/contexts/TimelineContext';
 import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
 import { RecordingProvider } from '@/contexts/RecordingContext';
+import { UndoRedoProvider } from '@/contexts/UndoRedoContext';
 import { MediaLibraryPanel } from '@/components/panels/MediaLibraryPanel';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { TimelinePanel } from '@/components/panels/TimelinePanel';
@@ -44,7 +45,7 @@ export interface MainScreenProps {
  */
 function MainScreenContent({ onNavigate }: MainScreenProps) {
   const { clips } = useMedia();
-  const { timeline } = useTimeline();
+  const { timeline, applySnapshot } = useTimeline();
   const {
     metadata,
     exportSettings,
@@ -136,6 +137,23 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
     }
   }, [clips.length, timeline.clips.length, markModified]);
   
+  /**
+   * Handle undo/redo state changes from UndoRedoProvider
+   */
+  useEffect(() => {
+    const handleUndoRedoStateChange = (event: Event) => {
+      const customEvent = event as CustomEvent<import('@/services/undoRedoService').TimelineStateSnapshot>;
+      applySnapshot(customEvent.detail);
+      markModified(); // Mark project as modified when undo/redo occurs
+    };
+    
+    window.addEventListener('undoRedoStateChange', handleUndoRedoStateChange);
+    
+    return () => {
+      window.removeEventListener('undoRedoStateChange', handleUndoRedoStateChange);
+    };
+  }, [applySnapshot, markModified]);
+  
   return (
     <div className="flex h-full w-full flex-col bg-gray-900">
       {/* Top Bar / Menu */}
@@ -226,6 +244,25 @@ export function MainScreen({ loadedProject, projectFilePath, ...props }: MainScr
   const initialClips = loadedProject?.clips || [];
   const initialTimeline = loadedProject?.timeline;
   
+  // Create handler for undo/redo state changes
+  // This needs to be a stable reference, so we'll create it inside a wrapper component
+  const UndoRedoWrapper = ({ children }: { children: React.ReactNode }) => {
+    return (
+      <UndoRedoProvider
+        maxHistorySize={50}
+        onStateChange={(snapshot) => {
+          // Find TimelineContext and apply snapshot
+          // We'll handle this via a ref pattern in MainScreenContent
+          // For now, we use a global approach
+          const event = new CustomEvent('undoRedoStateChange', { detail: snapshot });
+          window.dispatchEvent(event);
+        }}
+      >
+        {children}
+      </UndoRedoProvider>
+    );
+  };
+  
   return (
     <ProjectProvider
       initialMetadata={initialMetadata}
@@ -233,11 +270,13 @@ export function MainScreen({ loadedProject, projectFilePath, ...props }: MainScr
       initialProjectFilePath={projectFilePath || undefined}
     >
       <MediaProvider initialClips={initialClips}>
-        <TimelineProvider initialTimeline={initialTimeline}>
-          <RecordingProvider>
-            <MainScreenContent {...props} />
-          </RecordingProvider>
-        </TimelineProvider>
+        <UndoRedoWrapper>
+          <TimelineProvider initialTimeline={initialTimeline}>
+            <RecordingProvider>
+              <MainScreenContent {...props} />
+            </RecordingProvider>
+          </TimelineProvider>
+        </UndoRedoWrapper>
       </MediaProvider>
     </ProjectProvider>
   );

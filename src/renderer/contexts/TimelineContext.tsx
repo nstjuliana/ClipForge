@@ -7,9 +7,11 @@
  * @module contexts/TimelineContext
  */
 
-import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { TimelineClip, TimelineState, Track } from '@/types/timeline';
 import type { Clip } from '@/types/clip';
+import { UndoRedoContext } from './UndoRedoContext';
+import type { TimelineStateSnapshot } from '@/services/undoRedoService';
 
 /**
  * Timeline context value type
@@ -67,6 +69,15 @@ interface TimelineContextValue {
   
   /** Move clip to different track */
   moveClipToTrack: (timelineClipId: string, newTrackIndex: number) => void;
+  
+  /** Apply undo/redo state snapshot (internal use) */
+  applySnapshot: (snapshot: TimelineStateSnapshot) => void;
+  
+  /** Start a drag operation (defers undo recording until drag ends) */
+  startDragOperation: () => void;
+  
+  /** End a drag operation (records undo state) */
+  endDragOperation: () => void;
 }
 
 /**
@@ -117,6 +128,155 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       };
   
   const [timeline, setTimeline] = useState<TimelineState>(initializedTimeline);
+  
+  // Flag to prevent recording undo when applying undo/redo state
+  const isApplyingUndoRedoRef = useRef(false);
+  
+  // Flag to track if we're in a drag operation
+  const isDragOperationRef = useRef(false);
+  
+  // Store the state before drag started
+  const dragStartStateRef = useRef<TimelineStateSnapshot | null>(null);
+  
+  /**
+   * Create a snapshot of mutable timeline state
+   */
+  const createSnapshot = useCallback((state: TimelineState): TimelineStateSnapshot => {
+    return {
+      clips: state.clips,
+      tracks: state.tracks,
+      duration: state.duration,
+    };
+  }, []);
+  
+  /**
+   * Apply a snapshot to the timeline (preserving view state)
+   */
+  const applySnapshot = useCallback((snapshot: TimelineStateSnapshot, currentState: TimelineState): TimelineState => {
+    return {
+      ...currentState,
+      clips: snapshot.clips,
+      tracks: snapshot.tracks,
+      duration: snapshot.duration,
+    };
+  }, []);
+  
+  // Get undo/redo context (optional - may be null if not wrapped)
+  const undoRedo = useContext(UndoRedoContext);
+  
+  // Track previous timeline state for undo recording
+  const prevTimelineRef = useRef<TimelineState>(timeline);
+  
+  // Initialize undo/redo with current state on mount
+  useEffect(() => {
+    if (undoRedo) {
+      undoRedo.initialize(createSnapshot(timeline));
+      prevTimelineRef.current = timeline;
+    }
+  }, []); // Only on mount
+  
+  // Handle undo/redo operations by applying state changes
+  // This effect listens for undo/redo and applies the returned state
+  useEffect(() => {
+    if (!undoRedo) return;
+    
+    // We can't directly listen to undo/redo calls, so we'll handle this
+    // via the onStateChange callback pattern in UndoRedoProvider
+    // which will be set up in MainScreen
+  }, [undoRedo, applySnapshot]);
+  
+  // Function to apply undo/redo state snapshot
+  const applySnapshotToTimeline = useCallback((snapshot: TimelineStateSnapshot) => {
+    isApplyingUndoRedoRef.current = true;
+    setTimeline(prev => {
+      const newState = applySnapshot(snapshot, prev);
+      prevTimelineRef.current = newState;
+      return newState;
+    });
+    // Reset flag after state update
+    setTimeout(() => {
+      isApplyingUndoRedoRef.current = false;
+    }, 0);
+  }, [applySnapshot]);
+  
+  /**
+   * Start a drag operation
+   * Records the current state as the "before" state for undo
+   */
+  const startDragOperation = useCallback(() => {
+    if (!undoRedo) return;
+    
+    isDragOperationRef.current = true;
+    dragStartStateRef.current = createSnapshot(timeline);
+    prevTimelineRef.current = timeline;
+  }, [undoRedo, timeline, createSnapshot]);
+  
+  /**
+   * End a drag operation
+   * Records the final state and creates an undo entry
+   */
+  const endDragOperation = useCallback(() => {
+    if (!undoRedo) {
+      isDragOperationRef.current = false;
+      dragStartStateRef.current = null;
+      return;
+    }
+    
+    if (!isDragOperationRef.current || !dragStartStateRef.current) {
+      isDragOperationRef.current = false;
+      dragStartStateRef.current = null;
+      return;
+    }
+    
+    const beforeSnapshot = dragStartStateRef.current;
+    const afterSnapshot = createSnapshot(timeline);
+    
+    // Only record if state actually changed
+    if (
+      JSON.stringify(beforeSnapshot.clips) !== JSON.stringify(afterSnapshot.clips) ||
+      JSON.stringify(beforeSnapshot.tracks) !== JSON.stringify(afterSnapshot.tracks) ||
+      beforeSnapshot.duration !== afterSnapshot.duration
+    ) {
+      undoRedo.recordChange(beforeSnapshot, afterSnapshot, 'Drag operation');
+    }
+    
+    isDragOperationRef.current = false;
+    dragStartStateRef.current = null;
+    prevTimelineRef.current = timeline;
+  }, [undoRedo, timeline, createSnapshot]);
+  
+  // Record state changes after timeline updates (but not from undo/redo or during drags)
+  useEffect(() => {
+    if (isApplyingUndoRedoRef.current) {
+      prevTimelineRef.current = timeline;
+      return;
+    }
+    
+    // Skip recording during drag operations (will be recorded on drag end)
+    if (isDragOperationRef.current) {
+      return;
+    }
+    
+    if (!undoRedo) {
+      prevTimelineRef.current = timeline;
+      return;
+    }
+    
+    // Check if timeline state changed
+    const prevSnapshot = createSnapshot(prevTimelineRef.current);
+    const currentSnapshot = createSnapshot(timeline);
+    
+    // Only record if clips, tracks, or duration changed
+    if (
+      JSON.stringify(prevSnapshot.clips) !== JSON.stringify(currentSnapshot.clips) ||
+      JSON.stringify(prevSnapshot.tracks) !== JSON.stringify(currentSnapshot.tracks) ||
+      prevSnapshot.duration !== currentSnapshot.duration
+    ) {
+      // Record the change
+      undoRedo.recordChange(prevSnapshot, currentSnapshot, 'Timeline change');
+      prevTimelineRef.current = timeline;
+    }
+  }, [timeline.clips, timeline.tracks, timeline.duration, undoRedo, createSnapshot]);
   
   /**
    * Generate unique timeline clip ID
@@ -464,6 +624,9 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       addTrack,
       removeTrack,
       moveClipToTrack,
+      applySnapshot: applySnapshotToTimeline,
+      startDragOperation,
+      endDragOperation,
     }),
     [
       timeline,
@@ -483,6 +646,9 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       addTrack,
       removeTrack,
       moveClipToTrack,
+      applySnapshotToTimeline,
+      startDragOperation,
+      endDragOperation,
     ]
   );
   
@@ -507,4 +673,5 @@ export function useTimeline(): TimelineContextValue {
   
   return context;
 }
+
 
