@@ -107,6 +107,31 @@ const electronAPI = {
     const buffer = Buffer.from(arrayBuffer);
     return ipcRenderer.invoke('recording:save', buffer, duration);
   },
+
+  /**
+   * Requests media access permission from the system
+   * @param mediaType - Type of media ('camera' or 'microphone')
+   * @returns Promise resolving to access result
+   */
+  requestMediaAccess: (mediaType: 'camera' | 'microphone'): Promise<{ success: boolean; granted: boolean; error?: string }> => {
+    return ipcRenderer.invoke('media:request-access', mediaType);
+  },
+
+  /**
+   * Checks system-level permissions for media access
+   * @param mediaType - Type of media ('camera' or 'microphone' or 'screen')
+   * @returns Promise resolving to permission status
+   */
+  checkSystemPermissions: (mediaType: 'camera' | 'microphone' | 'screen'): Promise<{
+    success: boolean;
+    platform?: string;
+    status?: string;
+    granted?: boolean | null;
+    help?: string | null;
+    error?: string;
+  }> => {
+    return ipcRenderer.invoke('media:check-system-permissions', mediaType);
+  },
 };
 
 /**
