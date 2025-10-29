@@ -56,7 +56,10 @@ interface TimelineContextValue {
   getTotalDuration: () => number;
   
   /** Split clip at playhead position */
-  splitClipAtPlayhead: () => boolean;
+  splitClipAtPlayhead: (clipIds?: string[] | null) => string[];
+  
+  /** Split all clips at playhead position across all tracks */
+  splitAllClipsAtPlayhead: () => string[];
   
   /** Get clip at playhead position */
   getClipAtPlayhead: () => TimelineClip | null;
@@ -469,65 +472,177 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
   }, [timeline.playhead, timeline.clips]);
   
   /**
-   * Split clip at playhead position
+   * Split clip(s) at playhead position
    * 
-   * Creates two new clips from the clip at the playhead position.
-   * Returns true if split was successful, false otherwise.
+   * If clipIds is provided, splits only those clips that intersect the playhead.
+   * If clipIds is null/undefined, uses current behavior (split clip at playhead).
+   * Returns array of left clip IDs created from splits.
    */
-  const splitClipAtPlayhead = useCallback((): boolean => {
-    const clip = getClipAtPlayhead();
+  const splitClipAtPlayhead = useCallback((clipIds?: string[] | null): string[] => {
+    const playhead = timeline.playhead;
+    let clipsToSplit: TimelineClip[] = [];
     
-    if (!clip) {
-      console.warn('No clip at playhead position to split');
-      return false;
+    if (clipIds && clipIds.length > 0) {
+      // Split only selected clips that intersect playhead
+      clipsToSplit = timeline.clips.filter(clip => 
+        clipIds.includes(clip.id) &&
+        playhead > clip.startTime &&
+        playhead < clip.startTime + clip.duration
+      );
+    } else {
+      // Default behavior: split clip at playhead
+      const clip = getClipAtPlayhead();
+      if (clip) {
+        clipsToSplit = [clip];
+      }
     }
     
+    if (clipsToSplit.length === 0) {
+      console.warn('No clip(s) at playhead position to split');
+      return [];
+    }
+    
+    // Prepare clips to split before state update
+    const clipsToRemove = new Set(clipsToSplit.map(c => c.id));
+    const splitResults: Array<{ firstClip: TimelineClip; secondClip: TimelineClip }> = [];
+    
+    for (const clip of clipsToSplit) {
+      // Calculate split point relative to clip's start
+      const splitPoint = playhead - clip.startTime;
+      
+      // Ensure split point is within clip bounds (not at edges)
+      if (splitPoint <= 0.01 || splitPoint >= clip.duration - 0.01) {
+        console.warn(`Cannot split clip ${clip.id} at clip edge`);
+        continue;
+      }
+      
+      // Calculate new in/out points for both clips
+      const splitTimeInSource = clip.inPoint + splitPoint;
+      
+      // Create first clip (before split - left clip)
+      const firstClip: TimelineClip = {
+        ...clip,
+        id: generateTimelineClipId(),
+        duration: splitPoint,
+        outPoint: splitTimeInSource,
+      };
+      
+      // Create second clip (after split - right clip)
+      const secondClip: TimelineClip = {
+        ...clip,
+        id: generateTimelineClipId(),
+        startTime: clip.startTime + splitPoint,
+        duration: clip.duration - splitPoint,
+        inPoint: splitTimeInSource,
+      };
+      
+      splitResults.push({ firstClip, secondClip });
+    }
+    
+    // Collect left clip IDs
+    const leftClipIds = splitResults.map(r => r.firstClip.id);
+    
+    // Update timeline: remove original clips and add split clips
+    if (splitResults.length > 0) {
+      setTimeline(prev => {
+        const newClips = splitResults.flatMap(r => [r.firstClip, r.secondClip]);
+        
+        // Remove original clips and add new split clips
+        const updatedClips = prev.clips
+          .filter(c => !clipsToRemove.has(c.id))
+          .concat(newClips)
+          .sort((a, b) => a.startTime - b.startTime);
+        
+        return {
+          ...prev,
+          clips: updatedClips,
+        };
+      });
+    }
+    
+    return leftClipIds;
+  }, [timeline.playhead, timeline.clips, getClipAtPlayhead, generateTimelineClipId]);
+  
+  /**
+   * Split all clips at playhead position across all tracks
+   * 
+   * Finds all clips that intersect the playhead and splits them all.
+   * Returns array of all left clip IDs created from splits.
+   */
+  const splitAllClipsAtPlayhead = useCallback((): string[] => {
     const playhead = timeline.playhead;
     
-    // Calculate split point relative to clip's start
-    const splitPoint = playhead - clip.startTime;
+    // Find all clips that intersect playhead across all tracks
+    const clipsToSplit = timeline.clips.filter(clip => 
+      playhead > clip.startTime &&
+      playhead < clip.startTime + clip.duration
+    );
     
-    // Ensure split point is within clip bounds (not at edges)
-    if (splitPoint <= 0.01 || splitPoint >= clip.duration - 0.01) {
-      console.warn('Cannot split at clip edge');
-      return false;
+    if (clipsToSplit.length === 0) {
+      console.warn('No clips at playhead position to split');
+      return [];
     }
     
-    // Calculate new in/out points for both clips
-    const splitTimeInSource = clip.inPoint + splitPoint;
+    // Prepare clips to split before state update
+    const clipsToRemove = new Set(clipsToSplit.map(c => c.id));
+    const splitResults: Array<{ firstClip: TimelineClip; secondClip: TimelineClip }> = [];
     
-    // Create first clip (before split)
-    const firstClip: TimelineClip = {
-      ...clip,
-      id: generateTimelineClipId(),
-      duration: splitPoint,
-      outPoint: splitTimeInSource,
-    };
-    
-    // Create second clip (after split)
-    const secondClip: TimelineClip = {
-      ...clip,
-      id: generateTimelineClipId(),
-      startTime: clip.startTime + splitPoint,
-      duration: clip.duration - splitPoint,
-      inPoint: splitTimeInSource,
-    };
-    
-    // Update timeline: remove original clip and add two new clips
-    setTimeline(prev => {
-      const newClips = prev.clips
-        .filter(c => c.id !== clip.id)
-        .concat([firstClip, secondClip])
-        .sort((a, b) => a.startTime - b.startTime);
+    for (const clip of clipsToSplit) {
+      // Calculate split point relative to clip's start
+      const splitPoint = playhead - clip.startTime;
       
-      return {
-        ...prev,
-        clips: newClips,
+      // Ensure split point is within clip bounds (not at edges)
+      if (splitPoint <= 0.01 || splitPoint >= clip.duration - 0.01) {
+        console.warn(`Cannot split clip ${clip.id} at clip edge`);
+        continue;
+      }
+      
+      // Calculate new in/out points for both clips
+      const splitTimeInSource = clip.inPoint + splitPoint;
+      
+      // Create first clip (before split - left clip)
+      const firstClip: TimelineClip = {
+        ...clip,
+        id: generateTimelineClipId(),
+        duration: splitPoint,
+        outPoint: splitTimeInSource,
       };
-    });
+      
+      // Create second clip (after split - right clip)
+      const secondClip: TimelineClip = {
+        ...clip,
+        id: generateTimelineClipId(),
+        startTime: clip.startTime + splitPoint,
+        duration: clip.duration - splitPoint,
+        inPoint: splitTimeInSource,
+      };
+      
+      splitResults.push({ firstClip, secondClip });
+    }
     
-    return true;
-  }, [timeline.playhead, timeline.clips, getClipAtPlayhead, generateTimelineClipId]);
+    // Collect left clip IDs
+    const leftClipIds = splitResults.map(r => r.firstClip.id);
+    
+    // Update timeline: remove original clips and add split clips
+    if (splitResults.length > 0) {
+      setTimeline(prev => {
+        const newClips = splitResults.flatMap(r => [r.firstClip, r.secondClip]);
+        
+        // Remove original clips and add new split clips
+        const updatedClips = prev.clips
+          .filter(c => !clipsToRemove.has(c.id))
+          .concat(newClips)
+          .sort((a, b) => a.startTime - b.startTime);
+        
+        return {
+          ...prev,
+          clips: updatedClips,
+        };
+      });
+    }
+    
+    return leftClipIds;
+  }, [timeline.playhead, timeline.clips, generateTimelineClipId]);
   
   /**
    * Add a new track
@@ -620,6 +735,7 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       clearTimeline,
       getTotalDuration,
       splitClipAtPlayhead,
+      splitAllClipsAtPlayhead,
       getClipAtPlayhead,
       addTrack,
       removeTrack,
@@ -642,6 +758,7 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       clearTimeline,
       getTotalDuration,
       splitClipAtPlayhead,
+      splitAllClipsAtPlayhead,
       getClipAtPlayhead,
       addTrack,
       removeTrack,

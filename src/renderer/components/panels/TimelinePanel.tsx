@@ -34,7 +34,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const timelineCanvasRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 200 });
-  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack, setSelectedClips, removeTimelineClip, startDragOperation, endDragOperation } = useTimeline();
+  const { timeline, setPlayhead, updateTimelineClip, splitClipAtPlayhead, splitAllClipsAtPlayhead, getClipAtPlayhead, setZoom, setScrollPosition, addTrack, removeTrack, moveClipToTrack, setSelectedClips, removeTimelineClip, startDragOperation, endDragOperation } = useTimeline();
   const { clips: mediaClips } = useMedia();
   
   // Check if playhead is over a clip
@@ -71,6 +71,24 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   }, [NUM_TRACKS, TRACK_HEIGHT, TRACK_PADDING, RULER_HEIGHT]);
 
   /**
+   * Handle split clip button click
+   */
+  const handleSplitClip = useCallback(() => {
+    // If there are selected clips, split only those that intersect playhead
+    // Otherwise, use default behavior (split clip at playhead)
+    const clipIds = timeline.selectedClips.length > 0 ? timeline.selectedClips : null;
+    const leftClipIds = splitClipAtPlayhead(clipIds);
+    
+    if (leftClipIds.length === 0) {
+      alert('Cannot split clip(s) at this position');
+      return;
+    }
+    
+    // Select the left clip(s) after split
+    setSelectedClips(leftClipIds);
+  }, [timeline.selectedClips, splitClipAtPlayhead, setSelectedClips]);
+
+  /**
    * Handle keyboard events for clip manipulation
    */
   useEffect(() => {
@@ -86,7 +104,30 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         return;
       }
 
-      // No selected clips, nothing to do
+      // Check for Ctrl/Cmd modifier
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      // 's' key: split clip(s) (same as clicking split button)
+      // Works even without selected clips (splits clip at playhead)
+      if (e.key === 's' && !isCtrlOrCmd) {
+        e.preventDefault();
+        handleSplitClip();
+        return;
+      }
+
+      // Ctrl+S: split all clips at playhead across all tracks
+      // Works even without selected clips
+      if (e.key === 's' && isCtrlOrCmd) {
+        e.preventDefault();
+        const leftClipIds = splitAllClipsAtPlayhead();
+        if (leftClipIds.length > 0) {
+          // Select all left clips from the splits as multi-select
+          setSelectedClips(leftClipIds);
+        }
+        return;
+      }
+
+      // No selected clips, nothing to do (for other operations)
       if (timeline.selectedClips.length === 0) {
         return;
       }
@@ -101,7 +142,6 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
       }
 
       // Arrow keys for nudging, track movement, or edge snapping
-      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const frameDuration = 1 / 30; // Assume 30fps (1 frame = 1/30 seconds)
 
       // Ctrl/Cmd + Left/Right: snap to nearest clip edge
@@ -264,17 +304,7 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
         }
       };
     }
-  }, [timeline.selectedClips, timeline.clips, timeline.duration, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS]);
-  
-  /**
-   * Handle split clip button click
-   */
-  const handleSplitClip = useCallback(() => {
-    const success = splitClipAtPlayhead();
-    if (!success) {
-      alert('Cannot split clip at this position');
-    }
-  }, [splitClipAtPlayhead]);
+  }, [timeline.selectedClips, timeline.clips, timeline.duration, removeTimelineClip, updateTimelineClip, moveClipToTrack, NUM_TRACKS, handleSplitClip, splitAllClipsAtPlayhead, setSelectedClips]);
   
   /**
    * Handle zoom in
