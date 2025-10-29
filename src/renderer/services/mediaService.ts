@@ -165,6 +165,100 @@ export function fileListToArray(fileList: FileList): File[] {
 }
 
 /**
+ * Imports a video file from a file path (Electron only)
+ * 
+ * Uses file path directly instead of creating blob URLs.
+ * This is more reliable for Electron apps as file paths persist across sessions.
+ * 
+ * @param filePath - Full path to the video file
+ * @returns Promise resolving to import result
+ */
+export async function importVideoFilePath(filePath: string): Promise<MediaImportResult> {
+  try {
+    const fileName = filePath.split(/[/\\]/).pop() || 'video.mp4';
+    
+    // Validate file extension
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    if (!extension || !SUPPORTED_FORMATS.includes(extension)) {
+      return {
+        success: false,
+        error: `Unsupported file format. Supported: ${SUPPORTED_FORMATS.join(', ')}`,
+        fileName,
+      };
+    }
+    
+    // Get video file via IPC to create a File object for metadata extraction
+    const result: { success: boolean; buffer?: ArrayBuffer; error?: string } = 
+      await window.electron.getVideoBlobUrl(filePath);
+    
+    if (!result.success || !result.buffer) {
+      return {
+        success: false,
+        error: result.error || 'Failed to read video file',
+        fileName,
+      };
+    }
+    
+    // Create File object from buffer for metadata extraction
+    const blob = new Blob([result.buffer], { type: 'video/mp4' });
+    const file = new File([blob], fileName, { type: 'video/mp4' });
+    
+    // Validate file size
+    if (!isValidFileSize(file)) {
+      return {
+        success: false,
+        error: `File too large. Maximum size: ${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+        fileName,
+      };
+    }
+    
+    // Extract metadata
+    const metadata = await extractMetadataFromFile(file);
+    
+    // Generate thumbnail
+    const thumbnail = await generateThumbnailFromFile(file);
+    
+    // Create clip object with actual file path
+    const clip: Clip = {
+      id: generateClipId(),
+      filePath: filePath, // Use actual file path instead of blob URL
+      name: fileName,
+      duration: metadata.duration,
+      resolution: metadata.resolution,
+      frameRate: metadata.frameRate,
+      codec: metadata.codec,
+      fileSize: metadata.fileSize,
+      thumbnailPath: thumbnail,
+      importedAt: new Date(),
+    };
+    
+    return {
+      success: true,
+      clip,
+      fileName,
+    };
+  } catch (error) {
+    const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error during import',
+      fileName,
+    };
+  }
+}
+
+/**
+ * Imports multiple video files from file paths
+ * 
+ * @param filePaths - Array of file paths to import
+ * @returns Promise resolving to array of import results
+ */
+export async function importMultipleFilePaths(filePaths: string[]): Promise<MediaImportResult[]> {
+  const importPromises = filePaths.map(filePath => importVideoFilePath(filePath));
+  return Promise.all(importPromises);
+}
+
+/**
  * Generates a unique clip ID
  * 
  * Uses timestamp and random string for uniqueness.

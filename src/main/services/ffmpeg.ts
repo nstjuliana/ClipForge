@@ -65,6 +65,7 @@ interface TimelineClipData {
   inPoint: number;
   outPoint: number;
   filePath: string;
+  track: number; // Track index for layering
 }
 
 /**
@@ -90,18 +91,6 @@ interface ExportResult {
  * Progress callback type
  */
 type ProgressCallback = (progress: number) => void;
-
-/**
- * Segment type for export (either a clip or a gap/black screen)
- */
-interface ExportSegment {
-  type: 'clip' | 'gap';
-  startTime: number;
-  duration: number;
-  clipPath?: string; // Only for 'clip' type
-  inPoint?: number; // Only for 'clip' type
-  outPoint?: number; // Only for 'clip' type
-}
 
 /**
  * Generates a black screen video segment
@@ -216,15 +205,102 @@ export function exportSingleClip(
 }
 
 /**
- * Exports timeline with multiple clips
+ * Time segment with multiple layers
+ */
+interface TimeSegment {
+  startTime: number;
+  duration: number;
+  clips: TimelineClipData[]; // Clips active during this segment, sorted by track
+}
+
+/**
+ * Creates time segments from timeline clips considering track layering
+ * Each segment represents a period where the clip configuration doesn't change
+ */
+function createTimeSegments(clips: TimelineClipData[], timelineDuration: number): TimeSegment[] {
+  // Collect all unique time points where clips start or end
+  const timePoints = new Set<number>();
+  timePoints.add(0);
+  timePoints.add(timelineDuration);
+  
+  clips.forEach(clip => {
+    timePoints.add(clip.startTime);
+    timePoints.add(clip.startTime + clip.duration);
+  });
+  
+  const sortedTimes = Array.from(timePoints).sort((a, b) => a - b);
+  const segments: TimeSegment[] = [];
+  
+  // Create segments between each pair of time points
+  for (let i = 0; i < sortedTimes.length - 1; i++) {
+    const segmentStart = sortedTimes[i];
+    const segmentEnd = sortedTimes[i + 1];
+    const segmentDuration = segmentEnd - segmentStart;
+    
+    if (segmentDuration < 0.01) continue; // Skip tiny segments
+    
+    // Find all clips active during this segment
+    const activeClips = clips.filter(clip => {
+      const clipEnd = clip.startTime + clip.duration;
+      return clip.startTime < segmentEnd && clipEnd > segmentStart;
+    });
+    
+    // Sort by track (ascending) - lower track renders on top
+    activeClips.sort((a, b) => a.track - b.track);
+    
+    segments.push({
+      startTime: segmentStart,
+      duration: segmentDuration,
+      clips: activeClips,
+    });
+  }
+  
+  return segments;
+}
+
+/**
+ * Exports a time segment with track priority
+ * Only the topmost track (lowest index) is used when multiple clips overlap
+ */
+async function exportSegmentWithLayers(
+  segment: TimeSegment,
+  outputPath: string,
+  options: ExportOptions = {}
+): Promise<ExportResult> {
+  return new Promise((resolve) => {
+    if (segment.clips.length === 0) {
+      // No clips - generate black screen
+      return resolve(
+        new Promise<ExportResult>((res) => {
+          generateBlackScreen(segment.duration, outputPath, options).then(res);
+        })
+      );
+    }
+    
+    // When multiple clips overlap, only use the topmost track (lowest index)
+    // Clips are already sorted by track in createTimeSegments
+    const topClip = segment.clips[0]; // First clip has lowest track index (topmost)
+    
+    const clipStartInSegment = Math.max(0, segment.startTime - topClip.startTime);
+    const inPoint = topClip.inPoint + clipStartInSegment;
+    const outPoint = Math.min(topClip.outPoint, inPoint + segment.duration);
+    
+    return resolve(
+      exportSingleClip(topClip.filePath, inPoint, outPoint, outputPath, options)
+    );
+  });
+}
+
+/**
+ * Exports timeline with multiple clips and track layering
  * 
- * Concatenates clips in sequence with black screens filling gaps.
+ * Handles multi-track compositing where lower track indices render on top.
  * 
- * @param clips - Array of timeline clips with file paths
+ * @param clips - Array of timeline clips with file paths and track info
  * @param outputPath - Path for output file
  * @param options - Export options
  * @param onProgress - Progress callback
- * @param timelineDuration - Total duration of timeline (for gaps at end)
+ * @param timelineDuration - Total duration of timeline
  * @returns Promise resolving to export result
  */
 export async function exportTimeline(
@@ -235,94 +311,32 @@ export async function exportTimeline(
   timelineDuration?: number
 ): Promise<ExportResult> {
   try {
-    // Sort clips by start time
-    const sortedClips = [...clips].sort((a, b) => a.startTime - b.startTime);
-    
-    // If single clip with no gaps, use simple export
-    if (sortedClips.length === 1 && sortedClips[0].startTime === 0) {
-      const clip = sortedClips[0];
-      const clipEndTime = clip.startTime + clip.duration;
-      const finalDuration = timelineDuration || clipEndTime;
-      
-      // If clip fills entire timeline, no gaps
-      if (Math.abs(clipEndTime - finalDuration) < 0.01) {
-        return await exportSingleClip(
-          clip.filePath,
-          clip.inPoint,
-          clip.outPoint,
-          outputPath,
-          options,
-          onProgress
-        );
-      }
+    if (clips.length === 0) {
+      return {
+        success: false,
+        error: 'No clips to export',
+      };
     }
     
-    // Build segments array (clips + gaps)
-    const segments: ExportSegment[] = [];
-    const finalDuration = timelineDuration || (sortedClips.length > 0 
-      ? Math.max(...sortedClips.map(c => c.startTime + c.duration))
-      : 0);
+    const finalDuration = timelineDuration || Math.max(...clips.map(c => c.startTime + c.duration));
     
-    // Add gap before first clip if needed
-    if (sortedClips.length > 0 && sortedClips[0].startTime > 0) {
-      segments.push({
-        type: 'gap',
-        startTime: 0,
-        duration: sortedClips[0].startTime,
-      });
+    // Check for simple single-clip case
+    if (clips.length === 1 && clips[0].startTime === 0 && 
+        Math.abs(clips[0].duration - finalDuration) < 0.01) {
+      const clip = clips[0];
+      return await exportSingleClip(
+        clip.filePath,
+        clip.inPoint,
+        clip.outPoint,
+        outputPath,
+        options,
+        onProgress
+      );
     }
     
-    // Add clips and gaps between them
-    for (let i = 0; i < sortedClips.length; i++) {
-      const clip = sortedClips[i];
-      const clipEndTime = clip.startTime + clip.duration;
-      
-      // Add the clip
-      segments.push({
-        type: 'clip',
-        startTime: clip.startTime,
-        duration: clip.duration,
-        clipPath: clip.filePath,
-        inPoint: clip.inPoint,
-        outPoint: clip.outPoint,
-      });
-      
-      // Check for gap after this clip
-      if (i < sortedClips.length - 1) {
-        const nextClip = sortedClips[i + 1];
-        const gap = nextClip.startTime - clipEndTime;
-        if (gap > 0.01) { // Only add gap if > 10ms
-          segments.push({
-            type: 'gap',
-            startTime: clipEndTime,
-            duration: gap,
-          });
-        }
-      }
-    }
+    // Create time segments considering track layering
+    const segments = createTimeSegments(clips, finalDuration);
     
-    // Add gap after last clip if needed
-    if (sortedClips.length > 0) {
-      const lastClip = sortedClips[sortedClips.length - 1];
-      const lastClipEndTime = lastClip.startTime + lastClip.duration;
-      const finalGap = finalDuration - lastClipEndTime;
-      if (finalGap > 0.01) {
-        segments.push({
-          type: 'gap',
-          startTime: lastClipEndTime,
-          duration: finalGap,
-        });
-      }
-    } else if (finalDuration > 0) {
-      // No clips, but timeline has duration - create all black
-      segments.push({
-        type: 'gap',
-        startTime: 0,
-        duration: finalDuration,
-      });
-    }
-    
-    // If no segments, return error
     if (segments.length === 0) {
       return {
         success: false,
@@ -330,63 +344,44 @@ export async function exportTimeline(
       };
     }
     
-    // For multiple segments, process each and concatenate
+    // If only one segment, export it directly
+    if (segments.length === 1) {
+      onProgress?.(50);
+      const result = await exportSegmentWithLayers(segments[0], outputPath, options);
+      onProgress?.(100);
+      return result;
+    }
+    
+    // Multiple segments - process and concatenate
     const tempDir = path.join(process.cwd(), '.temp-export-' + randomUUID());
     await fs.mkdir(tempDir, { recursive: true });
     
     const processedFiles: string[] = [];
     const totalSegments = segments.length;
     
-    // Process each segment (clip or gap)
+    // Process each segment
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
       const tempOutput = path.join(tempDir, `segment_${i}.mp4`);
       
-      let result: ExportResult;
-      
-      if (segment.type === 'clip' && segment.clipPath && segment.inPoint !== undefined && segment.outPoint !== undefined) {
-        // Export clip
-        result = await exportSingleClip(
-          segment.clipPath,
-          segment.inPoint,
-          segment.outPoint,
-          tempOutput,
-          options,
-          (clipProgress) => {
-            // Calculate overall progress
-            const overallProgress = ((i / totalSegments) * 100) + (clipProgress / totalSegments);
-            onProgress?.(Math.min(overallProgress, 99));
-          }
-        );
-      } else if (segment.type === 'gap') {
-        // Generate black screen
-        result = await generateBlackScreen(
-          segment.duration,
-          tempOutput,
-          options
-        );
-        // Update progress for gap generation
-        const overallProgress = ((i / totalSegments) * 100) + (50 / totalSegments);
-        onProgress?.(Math.min(overallProgress, 99));
-      } else {
-        result = { success: false, error: 'Invalid segment type' };
-      }
+      const result = await exportSegmentWithLayers(segment, tempOutput, options);
       
       if (!result.success) {
-        // Cleanup and return error
         await fs.rm(tempDir, { recursive: true, force: true });
         return result;
       }
       
       processedFiles.push(tempOutput);
+      
+      const progress = ((i + 1) / totalSegments) * 90; // Reserve 10% for final concat
+      onProgress?.(Math.min(progress, 90));
     }
     
-    // Create concat file list
+    // Concatenate all segments
     const concatListPath = path.join(tempDir, 'concat.txt');
     const concatContent = processedFiles.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
     await fs.writeFile(concatListPath, concatContent);
     
-    // Concatenate all segments
     await new Promise<void>((resolve, reject) => {
       let command = ffmpeg()
         .input(concatListPath)
@@ -399,7 +394,6 @@ export async function exportTimeline(
           '-crf 23',
         ]);
       
-      // Add resolution if specified
       if (options.resolution) {
         command = command.size(`${options.resolution[0]}x${options.resolution[1]}`);
       }
@@ -410,7 +404,7 @@ export async function exportTimeline(
         .save(outputPath);
     });
     
-    // Cleanup temp files
+    // Cleanup
     await fs.rm(tempDir, { recursive: true, force: true });
     
     onProgress?.(100);

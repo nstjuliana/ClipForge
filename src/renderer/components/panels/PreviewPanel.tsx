@@ -39,6 +39,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   
   /**
    * Get the clip at the current playhead position
+   * Returns the clip from the topmost track (lowest track index)
    */
   const getCurrentClip = useCallback(() => {
     const playhead = timeline.playhead;
@@ -51,20 +52,28 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       clipId: tc.clipId,
       startTime: tc.startTime,
       duration: tc.duration,
-      endTime: tc.startTime + tc.duration
+      endTime: tc.startTime + tc.duration,
+      track: tc.track
     })));
     console.log('Media clips count:', mediaClips.length);
     
-    // Find clip at playhead position
-    const timelineClip = timeline.clips.find(tc => {
+    // Find all clips at playhead position
+    const clipsAtPlayhead = timeline.clips.filter(tc => {
       const isInRange = playhead >= tc.startTime && playhead < tc.startTime + tc.duration;
-      console.log(`Checking clip ${tc.id}: start=${tc.startTime}, end=${tc.startTime + tc.duration}, playhead=${playhead}, inRange=${isInRange}`);
+      console.log(`Checking clip ${tc.id}: start=${tc.startTime}, end=${tc.startTime + tc.duration}, playhead=${playhead}, track=${tc.track}, inRange=${isInRange}`);
       return isInRange;
     });
     
-    console.log('Found timeline clip:', timelineClip);
+    console.log('Found clips at playhead:', clipsAtPlayhead);
     
-    if (!timelineClip) return null;
+    if (clipsAtPlayhead.length === 0) return null;
+    
+    // Sort by track index (ascending) - lower track index = higher priority (on top)
+    // Track 1 (index 0) renders on top of Track 2 (index 1), etc.
+    clipsAtPlayhead.sort((a, b) => a.track - b.track);
+    
+    const timelineClip = clipsAtPlayhead[0]; // Get topmost track clip
+    console.log('Selected topmost clip:', timelineClip);
     
     // Get source clip
     const clip = mediaClips.find(c => c.id === timelineClip.clipId);
@@ -77,12 +86,20 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
 
   /**
    * Find the next clip after the given playhead position
+   * If multiple clips start at the same time, returns the one from the topmost track
    */
   const getNextClip = useCallback((playhead: number) => {
     // Find all clips that start after the playhead, then get the earliest one
     const futureClips = timeline.clips
       .filter(tc => tc.startTime > playhead)
-      .sort((a, b) => a.startTime - b.startTime);
+      .sort((a, b) => {
+        // First sort by start time
+        if (a.startTime !== b.startTime) {
+          return a.startTime - b.startTime;
+        }
+        // If same start time, sort by track (lower track = higher priority)
+        return a.track - b.track;
+      });
     
     if (futureClips.length === 0) return null;
     
@@ -113,38 +130,36 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       setIsLoading(true);
       setCurrentClipPath(current.clip.filePath);
       
-      // Check if filePath is already a blob URL or data URL
-      if (current.clip.filePath.startsWith('blob:') || current.clip.filePath.startsWith('data:')) {
-        // Already a blob URL or data URL, use it directly
-        setVideoBlobUrl(current.clip.filePath);
-        setIsLoading(false);
-      } else {
-        // File path - need to load via IPC
-        window.electron.getVideoBlobUrl(current.clip.filePath)
-          .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
-            if (!result.success || !result.buffer) {
-              console.error('Failed to load video:', result.error);
-              setIsLoading(false);
-              return;
-            }
-            
-            // Clean up old blob URL if we created it
-            if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
-              URL.revokeObjectURL(videoBlobUrl);
-            }
-            
-            // Convert buffer to Blob and create URL
-            const blob = new Blob([result.buffer], { type: 'video/mp4' });
-            const url = URL.createObjectURL(blob);
-            
-            setVideoBlobUrl(url);
+      // Always load via IPC for consistent behavior
+      // This handles both real file paths and will error gracefully for invalid blob URLs
+      window.electron.getVideoBlobUrl(current.clip.filePath)
+        .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
+          if (!result.success || !result.buffer) {
+            console.error('Failed to load video:', result.error);
+            console.error('Attempted to load path:', current.clip.filePath);
+            setVideoBlobUrl(null);
             setIsLoading(false);
-          })
-          .catch((err: unknown) => {
-            console.error('Failed to load video:', err);
-            setIsLoading(false);
-          });
-      }
+            return;
+          }
+          
+          // Clean up old blob URL if we created it
+          if (videoBlobUrl && currentClipPath && !currentClipPath.startsWith('blob:')) {
+            URL.revokeObjectURL(videoBlobUrl);
+          }
+          
+          // Convert buffer to Blob and create URL
+          const blob = new Blob([result.buffer], { type: 'video/mp4' });
+          const url = URL.createObjectURL(blob);
+          
+          setVideoBlobUrl(url);
+          setIsLoading(false);
+        })
+        .catch((err: unknown) => {
+          console.error('Failed to load video:', err);
+          console.error('Attempted to load path:', current.clip.filePath);
+          setVideoBlobUrl(null);
+          setIsLoading(false);
+        });
     }
   }, [getCurrentClip, currentClipPath, videoBlobUrl]);
   

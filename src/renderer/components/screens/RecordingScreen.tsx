@@ -37,6 +37,9 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     requestPermissions,
     getAvailableSources,
     selectSource,
+    enumerateDevices,
+    selectVideoDevice,
+    selectAudioDevice,
     startRecording,
     stopRecording,
     cancelRecording,
@@ -59,7 +62,12 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     if (mode === 'screen' || mode === 'pip') {
       loadSources();
     }
-  }, [mode]);
+    
+    // Load media devices for webcam mode
+    if (mode === 'webcam' || mode === 'pip') {
+      enumerateDevices();
+    }
+  }, [mode, enumerateDevices]);
   
   /**
    * Load available desktop sources
@@ -118,7 +126,7 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
       const filePath = await stopRecording();
       
       if (filePath) {
-        // Read file via IPC (works correctly in Electron)
+        // Read file via IPC to get metadata
         const fileName = filePath.split(/[/\\]/).pop() || 'recording.webm';
         const result: { success: boolean; buffer?: ArrayBuffer; error?: string } = 
           await window.electron.getVideoBlobUrl(filePath);
@@ -127,7 +135,7 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
           throw new Error(result.error || 'Failed to read recording file');
         }
         
-        // Create File object from buffer
+        // Create File object from buffer for metadata extraction
         const blob = new Blob([result.buffer], { type: 'video/webm' });
         const file = new File([blob], fileName, { type: 'video/webm' });
         
@@ -135,11 +143,17 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
         const importResult = await importVideoFile(file);
         
         if (importResult.success && importResult.clip) {
-          // Add to media library
-          addClip(importResult.clip);
+          // IMPORTANT: Replace the blob URL with the actual file path
+          const clipWithRealPath = {
+            ...importResult.clip,
+            filePath: filePath, // Use the actual saved file path, not the blob URL
+          };
+          
+          // Add to media library with real path
+          addClip(clipWithRealPath);
           
           // Add to timeline
-          addClipToTimeline(importResult.clip);
+          addClipToTimeline(clipWithRealPath);
           
           alert('Recording added to timeline!');
         } else {
@@ -317,19 +331,58 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
       
       {/* Controls */}
       <div className="px-6 py-4 bg-gray-800 border-t border-gray-700">
-        <div className="flex items-center justify-between max-w-5xl mx-auto">
-          {/* Audio Toggle */}
-          <button
-            onClick={toggleAudio}
-            disabled={recording.isRecording}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              recording.audioEnabled
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            {recording.audioEnabled ? '🎤 Audio On' : '🔇 Audio Off'}
-          </button>
+        <div className="flex items-center justify-between max-w-5xl mx-auto gap-4">
+          {/* Left Side - Device Selection & Audio Toggle */}
+          <div className="flex items-center gap-3">
+            {/* Video Device Selector (for webcam/pip modes) */}
+            {(mode === 'webcam' || mode === 'pip') && recording.videoDevices.length > 0 && !recording.isRecording && (
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-400 mb-1">Camera</label>
+                <select
+                  value={recording.selectedVideoDeviceId || ''}
+                  onChange={(e) => selectVideoDevice(e.target.value)}
+                  className="px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 text-sm focus:outline-none focus:border-blue-500"
+                >
+                  {recording.videoDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {/* Audio Device Selector */}
+            {recording.audioDevices.length > 0 && !recording.isRecording && recording.audioEnabled && (
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-400 mb-1">Microphone</label>
+                <select
+                  value={recording.selectedAudioDeviceId || ''}
+                  onChange={(e) => selectAudioDevice(e.target.value)}
+                  className="px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 text-sm focus:outline-none focus:border-blue-500"
+                >
+                  {recording.audioDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {/* Audio Toggle */}
+            <button
+              onClick={toggleAudio}
+              disabled={recording.isRecording}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                recording.audioEnabled
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {recording.audioEnabled ? '🎤 Audio On' : '🔇 Audio Off'}
+            </button>
+          </div>
           
           {/* Recording Control */}
           <div className="flex items-center gap-4">

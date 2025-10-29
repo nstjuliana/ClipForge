@@ -290,13 +290,22 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
   
   /**
    * Get clip at playhead position
+   * Returns the clip from the topmost track (lowest track index) if multiple clips overlap
    */
   const getClipAtPlayhead = useCallback((): TimelineClip | null => {
     const playhead = timeline.playhead;
-    const clip = timeline.clips.find(
+    
+    // Find all clips at playhead position
+    const clipsAtPlayhead = timeline.clips.filter(
       c => playhead >= c.startTime && playhead < c.startTime + c.duration
     );
-    return clip || null;
+    
+    if (clipsAtPlayhead.length === 0) return null;
+    
+    // Sort by track index (ascending) - lower track index = higher priority (on top)
+    clipsAtPlayhead.sort((a, b) => a.track - b.track);
+    
+    return clipsAtPlayhead[0];
   }, [timeline.playhead, timeline.clips]);
   
   /**

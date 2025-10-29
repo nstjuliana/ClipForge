@@ -48,6 +48,7 @@ interface TimelineClipData {
   inPoint: number;
   outPoint: number;
   filePath: string;
+  track: number; // Track index for layering
 }
 
 /**
@@ -81,7 +82,7 @@ export async function exportTimeline(
   timelineDuration?: number
 ): Promise<string> {
   try {
-    // Prepare timeline clips with file paths
+    // Prepare timeline clips with file paths and track info
     const clipsWithPaths: TimelineClipData[] = timelineClips.map(tc => {
       const clip = clips.find(c => c.id === tc.clipId);
       if (!clip) {
@@ -96,6 +97,7 @@ export async function exportTimeline(
         inPoint: tc.inPoint,
         outPoint: tc.outPoint,
         filePath: clip.filePath,
+        track: tc.track, // Include track for layering
       };
     });
     

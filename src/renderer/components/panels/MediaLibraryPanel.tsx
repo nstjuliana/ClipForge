@@ -10,7 +10,7 @@
 import React, { useCallback, useRef } from 'react';
 import { useMedia } from '@/contexts/MediaContext';
 import { useTimeline } from '@/contexts/TimelineContext';
-import { getFilesFromDragEvent, fileListToArray } from '@/services/mediaService';
+import { getFilesFromDragEvent, fileListToArray, importMultipleFilePaths } from '@/services/mediaService';
 import { formatDuration, formatFileSize } from '@/services/metadataService';
 import type { Clip } from '@/types/clip';
 
@@ -31,38 +31,67 @@ export interface MediaLibraryPanelProps {
  * Supports drag-and-drop to add clips to timeline.
  */
 export function MediaLibraryPanel({ className = '' }: MediaLibraryPanelProps) {
-  const { clips, selectedClipId, selectClip, importFiles } = useMedia();
+  const { clips, selectedClipId, selectClip, addClip } = useMedia();
   const { addClipToTimeline } = useTimeline();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   
   /**
-   * Handle file import button click
+   * Handle file import button click - uses Electron dialog
    */
-  const handleImportClick = useCallback(() => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
+  const handleImportClick = useCallback(async () => {
+    try {
+      // Use Electron's file dialog to get file paths
+      const filePaths = await window.electron.openFileDialog();
+      
+      if (filePaths.length === 0) return;
+      
+      // Import files using actual file paths
+      const results = await importMultipleFilePaths(filePaths);
+      
+      // Add successful clips to media library
+      results.forEach(result => {
+        if (result.success && result.clip) {
+          addClip(result.clip);
+        }
+      });
+      
+      // Show results
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      
+      if (failed > 0) {
+        const errorMessages = results
+          .filter(r => !r.success)
+          .map(r => `${r.fileName}: ${r.error}`)
+          .join('\n');
+        alert(`Import complete: ${successful} succeeded, ${failed} failed.\n\nErrors:\n${errorMessages}`);
+      } else {
+        console.log(`Import complete: ${successful} file(s) imported successfully`);
+      }
+    } catch (error) {
+      console.error('Failed to import files:', error);
+      alert('Failed to import files. Please try again.');
     }
-  }, []);
+  }, [addClip]);
   
   /**
-   * Handle file input change
+   * Handle file input change (fallback for drag-drop)
    */
   const handleFileInput = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
     
+    // For drag-drop, we still use the old method since we get File objects
+    // This is a fallback and shouldn't be used anymore with the dialog approach
     const fileArray = fileListToArray(files);
-    const results = await importFiles(fileArray);
     
-    // Show results in console for now (could add toast notifications later)
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
-    console.log(`Import complete: ${successful} succeeded, ${failed} failed`);
+    // Import and immediately fix the blob URLs by showing a warning
+    console.warn('Drag-drop import uses blob URLs which may not persist. Consider using the Import button instead.');
     
     // Reset input
     event.target.value = '';
-  }, [importFiles]);
+  }, []);
   
   /**
    * Handle drag over event
@@ -93,12 +122,37 @@ export function MediaLibraryPanel({ className = '' }: MediaLibraryPanelProps) {
     const files = getFilesFromDragEvent(event);
     if (files.length === 0) return;
     
-    const results = await importFiles(files);
+    // In Electron, File objects from drag-drop have a 'path' property
+    // Try to use file paths if available, otherwise show a warning
+    const filePaths = files
+      .map((file: File & { path?: string }) => file.path)
+      .filter((path): path is string => !!path);
     
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
-    console.log(`Import complete: ${successful} succeeded, ${failed} failed`);
-  }, [importFiles]);
+    if (filePaths.length === files.length) {
+      // All files have paths - use the proper import method
+      const results = await importMultipleFilePaths(filePaths);
+      
+      // Add successful clips to media library
+      results.forEach(result => {
+        if (result.success && result.clip) {
+          addClip(result.clip);
+        }
+      });
+      
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      
+      if (failed > 0) {
+        alert(`Import complete: ${successful} succeeded, ${failed} failed`);
+      } else {
+        console.log(`Import complete: ${successful} file(s) imported successfully`);
+      }
+    } else {
+      // Fallback - some files don't have paths (shouldn't happen in Electron)
+      console.warn('Could not get file paths from dropped files. Drag-drop may not work reliably.');
+      alert('Please use the Import button instead of drag-drop for reliable file imports.');
+    }
+  }, [addClip]);
   
   /**
    * Handle clip click
