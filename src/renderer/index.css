@@ -34,5 +34,9 @@
   .timeline-bg {
     @apply bg-timeline-bg;
   }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+  }
 }
 

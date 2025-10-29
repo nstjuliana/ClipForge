@@ -7,7 +7,7 @@
  * @component
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { MediaProvider, useMedia } from '@/contexts/MediaContext';
 import { TimelineProvider, useTimeline } from '@/contexts/TimelineContext';
 import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
@@ -58,6 +58,12 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
   
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isRecordingScreenOpen, setIsRecordingScreenOpen] = useState(false);
+  const [isMediaLibraryVisible, setIsMediaLibraryVisible] = useState(true);
+  const [previewHeight, setPreviewHeight] = useState<number | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<HTMLDivElement>(null);
+  const isResizingRef = useRef(false);
   
   /**
    * Handle back navigation
@@ -153,6 +159,48 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
       window.removeEventListener('undoRedoStateChange', handleUndoRedoStateChange);
     };
   }, [applySnapshot, markModified]);
+
+  /**
+   * Handle vertical resize between preview and timeline
+   */
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    
+    const startY = e.clientY;
+    const startPreviewHeight = previewHeight ?? (previewRef.current?.getBoundingClientRect().height ?? 0);
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current || !previewRef.current || !timelineRef.current) return;
+      
+      const container = previewRef.current.parentElement;
+      if (!container) return;
+      
+      const containerRect = container.getBoundingClientRect();
+      const containerHeight = containerRect.height;
+      const deltaY = e.clientY - startY;
+      
+      // Calculate new preview height
+      const newPreviewHeight = startPreviewHeight + deltaY;
+      
+      // Set constraints
+      const minPreviewHeight = 150;
+      const maxPreviewHeight = containerHeight - 200; // Leave at least 200px for timeline
+      
+      const constrainedPreviewHeight = Math.max(minPreviewHeight, Math.min(maxPreviewHeight, newPreviewHeight));
+      
+      setPreviewHeight(constrainedPreviewHeight);
+    };
+    
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [previewHeight]);
   
   return (
     <div className="flex h-full w-full flex-col bg-gray-900">
@@ -172,6 +220,13 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
         </div>
         
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsMediaLibraryVisible(!isMediaLibraryVisible)}
+            className="px-3 py-1.5 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors text-sm"
+            title={isMediaLibraryVisible ? "Hide Media Library" : "Show Media Library"}
+          >
+            {isMediaLibraryVisible ? '◀' : '▶'} Media
+          </button>
           <button
             onClick={() => setIsRecordingScreenOpen(true)}
             className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
@@ -198,21 +253,57 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
       </div>
 
       {/* Main Layout */}
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="flex flex-1 overflow-hidden min-h-0 relative">
         {/* Left Panel - Media Library */}
-        <div className="w-80 flex-shrink-0">
-          <MediaLibraryPanel />
-        </div>
+        {isMediaLibraryVisible && (
+          <div className="w-80 flex-shrink-0">
+            <MediaLibraryPanel />
+          </div>
+        )}
+
+        {/* Toggle button for media library when hidden */}
+        {!isMediaLibraryVisible && (
+          <button
+            onClick={() => setIsMediaLibraryVisible(true)}
+            className="absolute left-0 top-1/2 -translate-y-1/2 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white px-2 py-8 rounded-r-lg border-r border-y border-gray-700 transition-colors z-10"
+            title="Show Media Library"
+          >
+            ◀
+          </button>
+        )}
 
         {/* Center - Preview and Timeline */}
         <div className="flex flex-1 flex-col min-w-0">
           {/* Preview Panel */}
-          <div className="flex-1 min-h-0">
+          <div 
+            ref={previewRef}
+            className="flex-1 min-h-0"
+            style={previewHeight !== null ? { height: `${previewHeight}px`, flexShrink: 0 } : {}}
+          >
             <PreviewPanel />
           </div>
 
+          {/* Resizer Handle */}
+          <div
+            ref={resizeRef}
+            onMouseDown={handleResizeStart}
+            className="h-1 bg-gray-700 hover:bg-blue-600 cursor-ns-resize transition-colors relative z-10 flex-shrink-0 group"
+            style={{ userSelect: 'none' }}
+            title="Drag to resize"
+          >
+            <div className="absolute inset-y-0 left-0 right-0 -my-1 cursor-ns-resize" />
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-1 bg-gray-600 group-hover:bg-blue-500 rounded-full transition-colors" />
+          </div>
+
           {/* Timeline Panel */}
-          <div className="h-64 flex-shrink-0">
+          <div 
+            ref={timelineRef}
+            className="flex-shrink-0"
+            style={previewHeight !== null ? { 
+              height: `calc(100% - ${previewHeight}px - 4px)`,
+              minHeight: '200px'
+            } : {}}
+          >
             <TimelinePanel />
           </div>
         </div>

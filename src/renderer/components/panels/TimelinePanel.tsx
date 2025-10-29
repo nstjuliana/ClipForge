@@ -246,7 +246,11 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
       {/* Timeline Canvas */}
       <div 
         ref={timelineCanvasRef}
-        className="flex-1 overflow-auto bg-gray-900 focus:outline-none"
+        className="flex-1 overflow-auto bg-gray-900 focus:outline-none scrollbar-hide"
+        style={{
+          scrollbarWidth: 'none', /* Firefox */
+          msOverflowStyle: 'none', /* IE and Edge */
+        }}
         tabIndex={0}
         onWheel={handleWheel}
         onClick={() => {
