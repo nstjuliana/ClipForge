@@ -98,13 +98,14 @@ const electronAPI = {
   /**
    * Saves recording blob to file system
    * @param blob - Recorded video blob
+   * @param duration - Recording duration in seconds
    * @returns Promise resolving to saved file path
    */
-  saveRecording: async (blob: Blob): Promise<string> => {
+  saveRecording: async (blob: Blob, duration: number): Promise<string> => {
     // Convert blob to array buffer
     const arrayBuffer = await blob.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    return ipcRenderer.invoke('recording:save', buffer);
+    return ipcRenderer.invoke('recording:save', buffer, duration);
   },
 };
 

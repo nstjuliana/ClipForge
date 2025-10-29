@@ -8,7 +8,7 @@
  */
 
 import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
-import type { TimelineClip, TimelineState } from '@/types/timeline';
+import type { TimelineClip, TimelineState, Track } from '@/types/timeline';
 import type { Clip } from '@/types/clip';
 
 /**

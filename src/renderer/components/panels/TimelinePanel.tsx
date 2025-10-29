@@ -215,7 +215,7 @@ const handleRightTrimDrag = useCallback((clipId: string, deltaX: number) => {
    * Render timeline ruler (time markers)
    */
   const renderRuler = () => {
-    const markers = [];
+    const markers: React.ReactNode[] = [];
     const interval = 1; // 1 second intervals
     const maxTime = Math.max(timeline.duration, 10);
     

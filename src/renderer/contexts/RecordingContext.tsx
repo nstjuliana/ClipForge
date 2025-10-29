@@ -127,6 +127,7 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
   const recordedChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const durationRef = useRef<number>(0);
   
   /**
    * Request recording permissions based on mode
@@ -356,10 +357,12 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       mediaRecorder.start(100); // Collect data every 100ms
       mediaRecorderRef.current = mediaRecorder;
       
-      // Start duration timer
+      // Reset duration ref and start duration timer
+      durationRef.current = 0;
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
         const duration = (Date.now() - startTime) / 1000;
+        durationRef.current = duration;
         setRecording(prev => ({ ...prev, duration }));
       }, 100);
       
@@ -393,6 +396,9 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       }
       
       mediaRecorder.onstop = async () => {
+        // Capture duration from ref (most up-to-date value)
+        const capturedDuration = durationRef.current;
+        
         // Stop timer
         if (timerRef.current) {
           clearInterval(timerRef.current);
@@ -409,8 +415,8 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
         const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
         
         try {
-          // Save recording via IPC
-          const filePath = await window.electron.saveRecording(blob);
+          // Save recording via IPC with duration metadata
+          const filePath = await window.electron.saveRecording(blob, capturedDuration);
           
           setRecording(prev => ({
             ...prev,
@@ -451,6 +457,9 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    
+    // Reset duration ref
+    durationRef.current = 0;
     
     // Stop all tracks
     if (streamRef.current) {

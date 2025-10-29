@@ -118,23 +118,32 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
       const filePath = await stopRecording();
       
       if (filePath) {
-        // Create a File object from the saved recording
+        // Read file via IPC (works correctly in Electron)
         const fileName = filePath.split(/[/\\]/).pop() || 'recording.webm';
-        const response = await fetch(`file://${filePath}`);
-        const blob = await response.blob();
+        const result: { success: boolean; buffer?: ArrayBuffer; error?: string } = 
+          await window.electron.getVideoBlobUrl(filePath);
+        
+        if (!result.success || !result.buffer) {
+          throw new Error(result.error || 'Failed to read recording file');
+        }
+        
+        // Create File object from buffer
+        const blob = new Blob([result.buffer], { type: 'video/webm' });
         const file = new File([blob], fileName, { type: 'video/webm' });
         
         // Import the recording
-        const result = await importVideoFile(file);
+        const importResult = await importVideoFile(file);
         
-        if (result.success && result.clip) {
+        if (importResult.success && importResult.clip) {
           // Add to media library
-          addClip(result.clip);
+          addClip(importResult.clip);
           
           // Add to timeline
-          addClipToTimeline(result.clip);
+          addClipToTimeline(importResult.clip);
           
           alert('Recording added to timeline!');
+        } else {
+          throw new Error(importResult.error || 'Failed to import recording');
         }
       }
       
@@ -142,7 +151,7 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
       onClose();
     } catch (error) {
       console.error('Failed to save recording:', error);
-      alert('Failed to save recording.');
+      alert(`Failed to save recording: ${error instanceof Error ? error.message : 'Unknown error'}`);
       onClose();
     }
   };

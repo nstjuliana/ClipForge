@@ -30,7 +30,7 @@ export interface ElectronAPI {
   exportVideo: (clips: unknown[], outputPath: string, options: unknown, timelineDuration?: number) => Promise<{ success: boolean; outputPath?: string; error?: string }>;
   getVideoBlobUrl: (filePath: string) => Promise<{ success: boolean; buffer?: Buffer; error?: string }>;
   getDesktopSources: () => Promise<DesktopSource[]>;
-  saveRecording: (blob: Blob) => Promise<string>;
+  saveRecording: (blob: Blob, duration: number) => Promise<string>;
 }
 
 export {};

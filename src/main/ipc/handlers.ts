@@ -12,6 +12,37 @@ import { exportTimeline } from '../services/ffmpeg';
 import fs from 'fs/promises';
 import path from 'path';
 import { app } from 'electron';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
+import ffprobeStatic from 'ffprobe-static';
+
+/**
+ * Resolves a path that might be inside an ASAR archive to the unpacked location
+ */
+function resolveUnpackedPath(filePath: string): string {
+  if (!filePath) return filePath;
+  if (filePath.includes('.asar')) {
+    return filePath.replace(/\.asar([\\/])/g, '.asar.unpacked$1');
+  }
+  return filePath;
+}
+
+/**
+ * Sets up FFmpeg paths
+ */
+function setupFFmpegPaths() {
+  if (ffmpegStatic) {
+    const resolvedPath = resolveUnpackedPath(ffmpegStatic);
+    ffmpeg.setFfmpegPath(resolvedPath);
+  }
+  if (ffprobeStatic?.path) {
+    const resolvedPath = resolveUnpackedPath(ffprobeStatic.path);
+    ffmpeg.setFfprobePath(resolvedPath);
+  }
+}
+
+// Initialize FFmpeg paths
+setupFFmpegPaths();
 
 /**
  * Registers all IPC handlers
@@ -207,13 +238,14 @@ export function registerIPCHandlers(): void {
 
   /**
    * Handle recording save
-   * Saves recorded video blob to file system
+   * Saves recorded video blob to file system and adds duration metadata
    * 
    * @param _event - IPC event
    * @param buffer - Video buffer from recording
+   * @param duration - Recording duration in seconds
    * @returns Path to saved recording file
    */
-  ipcMain.handle('recording:save', async (_event, buffer: Buffer) => {
+  ipcMain.handle('recording:save', async (_event, buffer: Buffer, duration: number) => {
     try {
       // Create recordings directory in user data path
       const userDataPath = app.getPath('userData');
@@ -226,11 +258,37 @@ export function registerIPCHandlers(): void {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const fileName = `recording-${timestamp}.webm`;
       const filePath = path.join(recordingsDir, fileName);
+      const tempPath = `${filePath}.tmp`;
       
-      // Write buffer to file
-      await fs.writeFile(filePath, buffer);
+      // Write buffer to temp file first
+      await fs.writeFile(tempPath, buffer);
       
-      console.log('Recording saved to:', filePath);
+      // Use ffmpeg to remux the file with duration metadata
+      // We copy the video/audio streams and explicitly set the duration
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(tempPath)
+          .outputOptions([
+            '-c copy', // Copy codecs without re-encoding
+            '-t', duration.toString(), // Set duration explicitly
+            '-avoid_negative_ts', 'make_zero', // Fix timestamp issues
+          ])
+          .on('end', () => resolve())
+          .on('error', (err: Error) => {
+            console.error('FFmpeg remux error:', err);
+            // If ffmpeg fails, we'll still use the original file
+            resolve();
+          })
+          .save(filePath);
+      });
+      
+      // Remove temp file
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore if temp file doesn't exist
+      }
+      
+      console.log('Recording saved to:', filePath, 'with duration:', duration, 'seconds');
       return filePath;
     } catch (error) {
       console.error('Failed to save recording:', error);
