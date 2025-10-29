@@ -66,6 +66,8 @@ const TimelineContext = createContext<TimelineContextValue | null>(null);
  */
 export interface TimelineProviderProps {
   children: React.ReactNode;
+  /** Initial timeline state */
+  initialTimeline?: TimelineState;
 }
 
 /**
@@ -75,9 +77,9 @@ export interface TimelineProviderProps {
  * 
  * @component
  */
-export function TimelineProvider({ children }: TimelineProviderProps) {
+export function TimelineProvider({ children, initialTimeline }: TimelineProviderProps) {
   // Initialize timeline state
-  const [timeline, setTimeline] = useState<TimelineState>({
+  const [timeline, setTimeline] = useState<TimelineState>(initialTimeline || {
     clips: [],
     playhead: 0,
     isPlaying: false,

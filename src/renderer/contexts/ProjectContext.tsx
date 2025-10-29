@@ -59,6 +59,12 @@ const ProjectContext = createContext<ProjectContextValue | null>(null);
  */
 export interface ProjectProviderProps {
   children: React.ReactNode;
+  /** Initial project metadata */
+  initialMetadata?: ProjectMetadata;
+  /** Initial export settings */
+  initialExportSettings?: ExportSettings;
+  /** Initial project file path */
+  initialProjectFilePath?: string | null;
 }
 
 /**
@@ -90,10 +96,15 @@ const defaultExportSettings: ExportSettings = {
  * 
  * @component
  */
-export function ProjectProvider({ children }: ProjectProviderProps) {
-  const [metadata, setMetadata] = useState<ProjectMetadata>(defaultMetadata);
-  const [exportSettings, setExportSettings] = useState<ExportSettings>(defaultExportSettings);
-  const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
+export function ProjectProvider({ 
+  children,
+  initialMetadata,
+  initialExportSettings,
+  initialProjectFilePath = null,
+}: ProjectProviderProps) {
+  const [metadata, setMetadata] = useState<ProjectMetadata>(initialMetadata || defaultMetadata);
+  const [exportSettings, setExportSettings] = useState<ExportSettings>(initialExportSettings || defaultExportSettings);
+  const [projectFilePath, setProjectFilePath] = useState<string | null>(initialProjectFilePath);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   
   /**

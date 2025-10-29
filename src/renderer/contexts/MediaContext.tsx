@@ -57,6 +57,8 @@ const MediaContext = createContext<MediaContextValue | null>(null);
  */
 export interface MediaProviderProps {
   children: React.ReactNode;
+  /** Initial clips to load */
+  initialClips?: Clip[];
 }
 
 /**
@@ -66,8 +68,8 @@ export interface MediaProviderProps {
  * 
  * @component
  */
-export function MediaProvider({ children }: MediaProviderProps) {
-  const [clips, setClips] = useState<Clip[]>([]);
+export function MediaProvider({ children, initialClips = [] }: MediaProviderProps) {
+  const [clips, setClips] = useState<Clip[]>(initialClips);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   
   /**

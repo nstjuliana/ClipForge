@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { LaunchScreen } from './components/screens/LaunchScreen.tsx';
 import { ProjectSelectionScreen } from './components/screens/ProjectSelectionScreen.tsx';
 import { MainScreen } from './components/screens/MainScreen.tsx';
+import type { ProjectFile } from './types/project';
 
 /**
  * Screen type definition for routing
@@ -24,12 +25,26 @@ type ScreenType = 'launch' | 'project-selection' | 'main';
  */
 export function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('launch');
+  const [loadedProject, setLoadedProject] = useState<ProjectFile | null>(null);
+  const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
 
   /**
    * Navigate to a different screen
    * @param screen - The screen to navigate to
+   * @param project - Optional project data to pass to main screen
+   * @param filePath - Optional project file path
    */
-  const handleNavigate = (screen: ScreenType) => {
+  const handleNavigate = (
+    screen: ScreenType,
+    project?: ProjectFile | null,
+    filePath?: string | null
+  ) => {
+    if (project !== undefined) {
+      setLoadedProject(project);
+    }
+    if (filePath !== undefined) {
+      setProjectFilePath(filePath);
+    }
     setCurrentScreen(screen);
   };
 
@@ -39,7 +54,13 @@ export function App() {
       {currentScreen === 'project-selection' && (
         <ProjectSelectionScreen onNavigate={handleNavigate} />
       )}
-      {currentScreen === 'main' && <MainScreen onNavigate={handleNavigate} />}
+      {currentScreen === 'main' && (
+        <MainScreen 
+          onNavigate={handleNavigate}
+          loadedProject={loadedProject}
+          projectFilePath={projectFilePath}
+        />
+      )}
     </div>
   );
 }

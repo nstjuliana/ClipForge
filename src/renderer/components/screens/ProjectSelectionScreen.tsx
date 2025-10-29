@@ -14,7 +14,11 @@
  */
 export interface ProjectSelectionScreenProps {
   /** Navigation callback to switch screens */
-  onNavigate: (screen: 'launch' | 'project-selection' | 'main') => void;
+  onNavigate: (
+    screen: 'launch' | 'project-selection' | 'main',
+    project?: import('@/types/project').ProjectFile | null,
+    filePath?: string | null
+  ) => void;
 }
 
 /**
@@ -25,21 +29,44 @@ export interface ProjectSelectionScreenProps {
  */
 export function ProjectSelectionScreen({ onNavigate }: ProjectSelectionScreenProps) {
   const handleNewProject = () => {
-    // For Phase 0, just navigate to main screen
-    // In Phase 1, this will create a new project
-    onNavigate('main');
+    // Create new project - pass null to indicate new project
+    onNavigate('main', null, null);
   };
 
   const handleOpenProject = async () => {
-    // For Phase 0, just navigate to main screen
-    // In Phase 1, this will open file dialog and load project
+    // Open file dialog and load project
     if (typeof window !== 'undefined' && window.electron) {
       const projectPath = await window.electron.openProjectDialog();
       if (projectPath) {
-        console.log('Opening project:', projectPath);
+        try {
+          // Load the project file
+          const result = await window.electron.loadProject(projectPath);
+          if (result.success && result.data) {
+            console.log('Project loaded successfully:', projectPath);
+            // Parse dates from strings (JSON serialization converts dates to strings)
+            const projectData = result.data as any;
+            if (projectData.metadata) {
+              projectData.metadata.createdAt = new Date(projectData.metadata.createdAt);
+              projectData.metadata.modifiedAt = new Date(projectData.metadata.modifiedAt);
+            }
+            if (projectData.clips) {
+              projectData.clips = projectData.clips.map((clip: any) => ({
+                ...clip,
+                importedAt: new Date(clip.importedAt),
+              }));
+            }
+            // Navigate to main screen with loaded project
+            onNavigate('main', projectData, projectPath);
+          } else {
+            console.error('Failed to load project:', result.error);
+            alert(`Failed to load project: ${result.error}`);
+          }
+        } catch (error) {
+          console.error('Error loading project:', error);
+          alert('Failed to load project. Please try again.');
+        }
       }
     }
-    onNavigate('main');
   };
 
   const handleBack = () => {

@@ -24,7 +24,15 @@ import type { ProjectFile } from '@/types/project';
  */
 export interface MainScreenProps {
   /** Navigation callback to switch screens */
-  onNavigate: (screen: 'launch' | 'project-selection' | 'main') => void;
+  onNavigate: (
+    screen: 'launch' | 'project-selection' | 'main',
+    project?: ProjectFile | null,
+    filePath?: string | null
+  ) => void;
+  /** Loaded project data (null for new project) */
+  loadedProject?: ProjectFile | null;
+  /** Project file path */
+  projectFilePath?: string | null;
 }
 
 /**
@@ -37,6 +45,7 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
   const { timeline, clearTimeline } = useTimeline();
   const {
     metadata,
+    exportSettings,
     projectFilePath,
     setProjectFilePath,
     hasUnsavedChanges,
@@ -83,15 +92,7 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
           importedAt: clip.importedAt,
         })),
         timeline,
-        exportSettings: {
-          format: 'mp4',
-          resolution: [1920, 1080],
-          frameRate: 30,
-          videoCodec: 'libx264',
-          videoBitrate: 5000,
-          audioCodec: 'aac',
-          audioBitrate: 128,
-        },
+        exportSettings,
       };
       
       // Save project
@@ -110,7 +111,7 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
       console.error('Failed to save project:', error);
       alert('Failed to save project. Please try again.');
     }
-  }, [projectFilePath, metadata, clips, timeline, setProjectFilePath, markSaved]);
+  }, [projectFilePath, metadata, exportSettings, clips, timeline, setProjectFilePath, markSaved]);
   
   /**
    * Handle save as project
@@ -222,11 +223,21 @@ function MainScreenContent({ onNavigate }: MainScreenProps) {
  * 
  * Wraps the content with all necessary context providers.
  */
-export function MainScreen(props: MainScreenProps) {
+export function MainScreen({ loadedProject, projectFilePath, ...props }: MainScreenProps) {
+  // Initialize contexts with loaded project data or defaults
+  const initialMetadata = loadedProject?.metadata;
+  const initialExportSettings = loadedProject?.exportSettings;
+  const initialClips = loadedProject?.clips || [];
+  const initialTimeline = loadedProject?.timeline;
+  
   return (
-    <ProjectProvider>
-      <MediaProvider>
-        <TimelineProvider>
+    <ProjectProvider
+      initialMetadata={initialMetadata}
+      initialExportSettings={initialExportSettings}
+      initialProjectFilePath={projectFilePath || undefined}
+    >
+      <MediaProvider initialClips={initialClips}>
+        <TimelineProvider initialTimeline={initialTimeline}>
           <MainScreenContent {...props} />
         </TimelineProvider>
       </MediaProvider>
