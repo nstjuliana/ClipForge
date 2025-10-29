@@ -352,6 +352,33 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
       }
     };
   }, [timeline.isPlaying, timeline.playhead, timeline.duration, getCurrentClip, getNextClip, setPlayhead, setPlaying]);
+
+  /**
+   * Handle keyboard shortcuts (spacebar for play/pause)
+   */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle spacebar
+      if (e.key !== ' ') {
+        return;
+      }
+
+      // Don't process if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // Prevent default to avoid scrolling the page
+      e.preventDefault();
+      handlePlayPause();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handlePlayPause]);
   
   /**
    * Handle video ended
