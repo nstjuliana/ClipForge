@@ -34,7 +34,7 @@ export interface ExportModalProps {
 /**
  * Export state
  */
-type ExportState = 'idle' | 'loading-ffmpeg' | 'exporting' | 'success' | 'error';
+type ExportState = 'idle' | 'loading-ffmpeg' | 'generating-subtitles' | 'exporting' | 'success' | 'error';
 
 /**
  * Export Modal Component
@@ -51,6 +51,8 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [resolution, setResolution] = useState<'source' | '1080p' | '720p'>('1080p');
   const [fileName, setFileName] = useState('');
+  const [generateSubtitles, setGenerateSubtitles] = useState(false);
+  const [subtitleWarning, setSubtitleWarning] = useState<string | null>(null);
   
   /**
    * Initialize file name when modal opens
@@ -74,11 +76,61 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
     try {
       setError(null);
       setProgress(0);
+      setSubtitleWarning(null);
       
       // Load FFmpeg if not already loaded
       if (!isFFmpegLoaded()) {
         setExportState('loading-ffmpeg');
         await loadFFmpeg();
+      }
+      
+      let subtitlePath: string | undefined;
+      
+      // Generate subtitles if enabled
+      if (generateSubtitles) {
+        setExportState('generating-subtitles');
+        
+        try {
+          // Prepare timeline clips with file paths
+          const clipsWithPaths = timeline.clips.map(tc => {
+            const clip = clips.find(c => c.id === tc.clipId);
+            if (!clip) {
+              throw new Error(`Clip ${tc.clipId} not found`);
+            }
+            
+            return {
+              id: tc.id,
+              clipId: tc.clipId,
+              startTime: tc.startTime,
+              duration: tc.duration,
+              inPoint: tc.inPoint,
+              outPoint: tc.outPoint,
+              filePath: clip.filePath,
+              track: tc.track,
+            };
+          });
+          
+          console.log('[Export] Generating subtitles...');
+          const subtitleResult = await window.electron.generateSubtitles(
+            clipsWithPaths,
+            timeline.duration
+          );
+          
+          if (subtitleResult.success && subtitleResult.subtitlePath) {
+            subtitlePath = subtitleResult.subtitlePath;
+            console.log('[Export] Subtitles generated:', subtitlePath);
+          } else {
+            // Subtitle generation failed - show warning but continue
+            const warningMsg = subtitleResult.error || 'Subtitle generation failed';
+            console.warn('[Export] Subtitle generation failed:', warningMsg);
+            setSubtitleWarning(`Subtitles could not be generated: ${warningMsg}`);
+          }
+        } catch (err) {
+          // Catch any errors and continue with export
+          const warningMsg = err instanceof Error ? err.message : 'Unknown error';
+          console.warn('[Export] Subtitle generation error:', err);
+          setSubtitleWarning(`Subtitles could not be generated: ${warningMsg}`);
+        }
       }
       
       // Start export
@@ -96,6 +148,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         resolution: exportResolution,
         format: 'mp4',
         fileName,
+        subtitlePath, // Include subtitle path if generated
       };
       
       // Export timeline (will save to disk via native FFmpeg)
@@ -116,14 +169,14 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
       setError(err instanceof Error ? err.message : 'Export failed');
       setExportState('error');
     }
-  }, [timeline.clips, clips, resolution, fileName]);
+  }, [timeline.clips, timeline.duration, clips, resolution, fileName, generateSubtitles]);
   
   /**
    * Handle close
    */
   const handleClose = useCallback(() => {
-    if (exportState === 'exporting' || exportState === 'loading-ffmpeg') {
-      // Don't allow closing during export
+    if (exportState === 'exporting' || exportState === 'loading-ffmpeg' || exportState === 'generating-subtitles') {
+      // Don't allow closing during export or subtitle generation
       return;
     }
     
@@ -131,6 +184,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
     setExportState('idle');
     setProgress(0);
     setError(null);
+    setSubtitleWarning(null);
     onClose();
   }, [exportState, onClose]);
   
@@ -210,6 +264,24 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                 </div>
               </div>
               
+              {/* AI Subtitles */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={generateSubtitles}
+                    onChange={(e) => setGenerateSubtitles(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
+                  />
+                  <span className="text-sm font-medium text-gray-300">
+                    Generate AI Subtitles
+                  </span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1 ml-6">
+                  Uses OpenAI Whisper to transcribe audio (requires API key in .env)
+                </p>
+              </div>
+              
               {/* Timeline Info */}
               <div className="bg-gray-700/50 rounded p-3 text-sm">
                 <p className="text-gray-300">
@@ -249,6 +321,15 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
           </div>
         )}
         
+        {/* Generating Subtitles */}
+        {exportState === 'generating-subtitles' && (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mb-4"></div>
+            <p className="text-white font-medium mb-2">Generating Subtitles...</p>
+            <p className="text-sm text-gray-400">Transcribing audio with OpenAI Whisper</p>
+          </div>
+        )}
+        
         {/* Exporting */}
         {exportState === 'exporting' && (
           <div className="py-8">
@@ -275,12 +356,17 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
           <div className="text-center py-8">
             <div className="text-6xl mb-4">✅</div>
             <p className="text-white font-medium mb-2">Export Complete!</p>
-            <p className="text-sm text-gray-400 mb-6">
+            <p className="text-sm text-gray-400 mb-2">
               Your video has been downloaded successfully
             </p>
+            {subtitleWarning && (
+              <div className="bg-yellow-900/30 border border-yellow-700 rounded p-3 mb-4 text-left">
+                <p className="text-xs text-yellow-300">⚠️ {subtitleWarning}</p>
+              </div>
+            )}
             <button
               onClick={handleClose}
-              className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors mt-4"
             >
               Done
             </button>

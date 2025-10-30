@@ -132,6 +132,16 @@ const electronAPI = {
   }> => {
     return ipcRenderer.invoke('media:check-system-permissions', mediaType);
   },
+
+  /**
+   * Generates subtitles from timeline audio using OpenAI Whisper API
+   * @param clips - Timeline clips with file paths and timing info
+   * @param timelineDuration - Total duration of timeline
+   * @returns Promise resolving to subtitle generation result
+   */
+  generateSubtitles: (clips: unknown[], timelineDuration: number): Promise<{ success: boolean; subtitlePath?: string; error?: string }> => {
+    return ipcRenderer.invoke('subtitle:generate', clips, timelineDuration);
+  },
 };
 
 /**

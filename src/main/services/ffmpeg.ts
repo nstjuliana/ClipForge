@@ -76,6 +76,7 @@ interface ExportOptions {
   format?: 'mp4';
   bitrate?: number;
   frameRate?: number;
+  subtitlePath?: string; // Optional SRT subtitle file to embed
 }
 
 /**
@@ -324,14 +325,21 @@ export async function exportTimeline(
     if (clips.length === 1 && clips[0].startTime === 0 && 
         Math.abs(clips[0].duration - finalDuration) < 0.01) {
       const clip = clips[0];
-      return await exportSingleClip(
-        clip.filePath,
-        clip.inPoint,
-        clip.outPoint,
-        outputPath,
-        options,
-        onProgress
-      );
+      
+      // If no subtitles, use simple export
+      if (!options.subtitlePath) {
+        return await exportSingleClip(
+          clip.filePath,
+          clip.inPoint,
+          clip.outPoint,
+          outputPath,
+          options,
+          onProgress
+        );
+      }
+      
+      // With subtitles, we need to use the full pipeline
+      // Fall through to segment processing
     }
     
     // Create time segments considering track layering
@@ -344,12 +352,48 @@ export async function exportTimeline(
       };
     }
     
-    // If only one segment, export it directly
-    if (segments.length === 1) {
+    // If only one segment and no subtitles, export it directly
+    if (segments.length === 1 && !options.subtitlePath) {
       onProgress?.(50);
       const result = await exportSegmentWithLayers(segments[0], outputPath, options);
       onProgress?.(100);
       return result;
+    }
+    
+    // If only one segment with subtitles, process and add subtitles
+    if (segments.length === 1 && options.subtitlePath) {
+      onProgress?.(50);
+      const tempDir = path.join(process.cwd(), '.temp-export-' + randomUUID());
+      await fs.mkdir(tempDir, { recursive: true });
+      
+      const tempOutput = path.join(tempDir, 'video.mp4');
+      const result = await exportSegmentWithLayers(segments[0], tempOutput, options);
+      
+      if (!result.success) {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        return result;
+      }
+      
+      onProgress?.(80);
+      
+      // Add subtitles to the single segment
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(tempOutput)
+          .input(options.subtitlePath!)
+          .videoCodec('copy')
+          .audioCodec('copy')
+          .outputOptions([
+            '-c:s mov_text',
+            '-metadata:s:s:0 language=eng',
+          ])
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .save(outputPath);
+      });
+      
+      await fs.rm(tempDir, { recursive: true, force: true });
+      onProgress?.(100);
+      return { success: true, outputPath };
     }
     
     // Multiple segments - process and concatenate
@@ -394,6 +438,21 @@ export async function exportTimeline(
           '-crf 23',
         ]);
       
+      // Add subtitle track if provided
+      if (options.subtitlePath) {
+        try {
+          command = command
+            .input(options.subtitlePath)
+            .outputOptions([
+              '-c:s mov_text', // Subtitle codec for MP4
+              '-metadata:s:s:0 language=eng', // Set subtitle language
+            ]);
+          console.log('[FFmpeg] Adding subtitle track:', options.subtitlePath);
+        } catch (err) {
+          console.warn('[FFmpeg] Failed to add subtitle track:', err);
+        }
+      }
+      
       if (options.resolution) {
         command = command.size(`${options.resolution[0]}x${options.resolution[1]}`);
       }
@@ -435,5 +494,138 @@ export function getVideoMetadata(filePath: string): Promise<unknown> {
       }
     });
   });
+}
+
+/**
+ * Extracts and flattens audio from timeline clips into a single audio file
+ * 
+ * Handles multiple clips with trim points, gaps, and overlapping audio.
+ * All audio tracks are mixed together into a single mono or stereo track.
+ * 
+ * @param clips - Array of timeline clips with file paths and timing info
+ * @param outputPath - Path for output audio file (mp3 recommended)
+ * @param timelineDuration - Total duration of timeline
+ * @returns Promise resolving to export result
+ */
+export async function extractTimelineAudio(
+  clips: TimelineClipData[],
+  outputPath: string,
+  timelineDuration: number
+): Promise<ExportResult> {
+  try {
+    console.log('[FFmpeg] Extracting timeline audio...');
+    
+    if (clips.length === 0) {
+      return {
+        success: false,
+        error: 'No clips to extract audio from',
+      };
+    }
+    
+    // Create temp directory for intermediate audio files
+    const tempDir = path.join(process.cwd(), '.temp-audio-' + randomUUID());
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    // Extract audio from each clip with proper timing
+    const audioSegments: { path: string; startTime: number; duration: number }[] = [];
+    
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
+      const tempAudioPath = path.join(tempDir, `clip_${i}.mp3`);
+      
+      console.log(`[FFmpeg] Extracting audio from clip ${i + 1}/${clips.length}`);
+      
+      // Extract audio segment with trim points applied
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(clip.filePath)
+          .setStartTime(clip.inPoint)
+          .setDuration(clip.duration)
+          .audioCodec('libmp3lame')
+          .audioBitrate('192k')
+          .audioChannels(2)
+          .noVideo()
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .save(tempAudioPath);
+      });
+      
+      audioSegments.push({
+        path: tempAudioPath,
+        startTime: clip.startTime,
+        duration: clip.duration,
+      });
+    }
+    
+    // If single clip that starts at 0, just use it directly
+    if (audioSegments.length === 1 && audioSegments[0].startTime === 0) {
+      await fs.rename(audioSegments[0].path, outputPath);
+      await fs.rm(tempDir, { recursive: true, force: true });
+      console.log('[FFmpeg] Audio extraction complete (single clip)');
+      return { success: true, outputPath };
+    }
+    
+    // Build complex filter to mix all audio segments at their correct positions
+    // We'll use adelay to position each clip and amix to combine them
+    const filterComplex: string[] = [];
+    const inputs: string[] = [];
+    
+    audioSegments.forEach((segment, index) => {
+      inputs.push(segment.path);
+      
+      // Calculate delay in milliseconds
+      const delayMs = Math.round(segment.startTime * 1000);
+      
+      if (delayMs > 0) {
+        // Apply adelay to position the audio at the correct time
+        filterComplex.push(`[${index}:a]adelay=${delayMs}|${delayMs}[a${index}]`);
+      } else {
+        // No delay needed
+        filterComplex.push(`[${index}:a]anull[a${index}]`);
+      }
+    });
+    
+    // Mix all audio streams together
+    const mixInputs = audioSegments.map((_, index) => `[a${index}]`).join('');
+    filterComplex.push(`${mixInputs}amix=inputs=${audioSegments.length}:duration=longest:dropout_transition=2[aout]`);
+    
+    console.log('[FFmpeg] Mixing audio segments...');
+    
+    // Create the mixed audio file
+    await new Promise<void>((resolve, reject) => {
+      let command = ffmpeg();
+      
+      // Add all input files
+      audioSegments.forEach(segment => {
+        command = command.input(segment.path);
+      });
+      
+      command
+        .complexFilter(filterComplex.join(';'), 'aout')
+        .audioCodec('libmp3lame')
+        .audioBitrate('192k')
+        .audioChannels(2)
+        .duration(timelineDuration)
+        .noVideo()
+        .on('end', () => resolve())
+        .on('error', (err: Error) => {
+          console.error('[FFmpeg] Audio mixing error:', err);
+          reject(err);
+        })
+        .save(outputPath);
+    });
+    
+    // Cleanup temp directory
+    await fs.rm(tempDir, { recursive: true, force: true });
+    
+    console.log('[FFmpeg] Audio extraction complete:', outputPath);
+    
+    return { success: true, outputPath };
+  } catch (error) {
+    console.error('[FFmpeg] Audio extraction failed:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 }
 

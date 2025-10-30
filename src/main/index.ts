@@ -6,9 +6,49 @@
  * 
  * @module main/index
  */
+import dotenv from 'dotenv';
+import path from 'path';
+import { File } from 'node:buffer';
 import { app, BrowserWindow, session, systemPreferences } from 'electron';
 import { createWindow } from './window';
 import { registerIPCHandlers } from './ipc/handlers';
+
+// Polyfill File for OpenAI SDK (required for Node.js < 20 or Electron)
+// The OpenAI SDK needs File to be available globally for file uploads
+if (typeof globalThis.File === 'undefined') {
+  (globalThis as any).File = File;
+  console.log('[Polyfill] File global has been set for OpenAI SDK');
+}
+
+// Load environment variables from .env file in project root
+// In development, this is the project root
+// In production, this is relative to the app executable
+const envPath = app.isPackaged 
+  ? path.join(process.resourcesPath, '.env')
+  : path.join(__dirname, '../../.env');
+
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.warn('[ENV] Failed to load .env file from:', envPath);
+  console.warn('[ENV] Error:', envResult.error.message);
+  // Also try loading from current directory as fallback
+  const fallbackResult = dotenv.config();
+  if (fallbackResult.error) {
+    console.warn('[ENV] Fallback .env load also failed');
+  } else {
+    console.log('[ENV] Loaded .env from fallback location');
+  }
+} else {
+  console.log('[ENV] Successfully loaded .env from:', envPath);
+}
+
+// Log whether API key is configured (without revealing the key)
+if (process.env.OPENAI_API_KEY) {
+  console.log('[ENV] OpenAI API key is configured');
+} else {
+  console.warn('[ENV] OpenAI API key is NOT configured');
+}
 
 /**
  * Set up media permission handlers

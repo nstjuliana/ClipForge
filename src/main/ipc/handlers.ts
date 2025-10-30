@@ -8,13 +8,15 @@
  */
 import { ipcMain, dialog, desktopCapturer } from 'electron';
 import { saveProject, loadProject } from '../services/projectIO';
-import { exportTimeline } from '../services/ffmpeg';
+import { exportTimeline, extractTimelineAudio } from '../services/ffmpeg';
+import { generateSubtitles } from '../services/whisper';
 import fs from 'fs/promises';
 import path from 'path';
 import { app } from 'electron';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
+import type { TimelineClipData, SubtitleGenerationResult } from './types';
 
 /**
  * Resolves a path that might be inside an ASAR archive to the unpacked location
@@ -319,6 +321,60 @@ export function registerIPCHandlers(): void {
     } catch (error) {
       console.error('Failed to request media access:', error);
       return { success: false, granted: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  /**
+   * Handle subtitle generation
+   * Generates subtitles from timeline audio using OpenAI Whisper API
+   * 
+   * @param _event - IPC event
+   * @param clips - Timeline clips with file paths and timing info
+   * @param timelineDuration - Total duration of timeline
+   * @returns Result of subtitle generation
+   */
+  ipcMain.handle('subtitle:generate', async (_event, clips: TimelineClipData[], timelineDuration: number): Promise<SubtitleGenerationResult> => {
+    try {
+      console.log('[Subtitle] Starting subtitle generation...');
+      
+      // Create temp directory for audio file
+      const userDataPath = app.getPath('userData');
+      const tempDir = path.join(userDataPath, 'temp-subtitles');
+      await fs.mkdir(tempDir, { recursive: true });
+      
+      const audioPath = path.join(tempDir, `timeline-audio-${Date.now()}.mp3`);
+      
+      console.log('[Subtitle] Extracting timeline audio...');
+      
+      // Extract audio from timeline
+      const audioResult = await extractTimelineAudio(clips, audioPath, timelineDuration);
+      
+      if (!audioResult.success) {
+        return {
+          success: false,
+          error: `Failed to extract audio: ${audioResult.error}`,
+        };
+      }
+      
+      console.log('[Subtitle] Calling Whisper API...');
+      
+      // Generate subtitles using Whisper
+      const subtitleResult = await generateSubtitles(audioPath);
+      
+      // Clean up audio file
+      try {
+        await fs.unlink(audioPath);
+      } catch (err) {
+        console.warn('[Subtitle] Failed to cleanup audio file:', err);
+      }
+      
+      return subtitleResult;
+    } catch (error) {
+      console.error('[Subtitle] Subtitle generation failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during subtitle generation',
+      };
     }
   });
 

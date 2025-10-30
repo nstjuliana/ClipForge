@@ -23,3 +23,26 @@ export interface SaveDialogResult {
   canceled: boolean;
 }
 
+/**
+ * Subtitle generation result
+ */
+export interface SubtitleGenerationResult {
+  success: boolean;
+  subtitlePath?: string;
+  error?: string;
+}
+
+/**
+ * Timeline clip data for subtitle generation
+ */
+export interface TimelineClipData {
+  id: string;
+  clipId: string;
+  startTime: number;
+  duration: number;
+  inPoint: number;
+  outPoint: number;
+  filePath: string;
+  track: number;
+}
+

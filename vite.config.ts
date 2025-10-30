@@ -28,7 +28,7 @@ export default defineConfig({
             outDir: path.resolve(__dirname, 'dist-electron/main'),
             minify: false,
             rollupOptions: {
-              external: ['electron', 'path', 'fs', 'fs/promises', 'crypto', 'fluent-ffmpeg', 'ffmpeg-static', 'ffprobe-static'],
+              external: ['electron', 'path', 'fs', 'fs/promises', 'crypto', 'fluent-ffmpeg', 'ffmpeg-static', 'ffprobe-static', 'dotenv', 'openai'],
               output: {
                 format: 'cjs',
                 entryFileNames: 'index.js',

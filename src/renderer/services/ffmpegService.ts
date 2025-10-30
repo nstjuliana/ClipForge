@@ -30,6 +30,9 @@ export interface ExportOptions {
   
   /** Output file name */
   fileName?: string;
+  
+  /** Optional SRT subtitle file path to embed */
+  subtitlePath?: string;
 }
 
 /**
@@ -125,6 +128,7 @@ export async function exportTimeline(
       format: options.format || 'mp4',
       bitrate: options.bitrate,
       frameRate: options.frameRate,
+      subtitlePath: options.subtitlePath,
     }, timelineDuration);
     
     if (!result.success) {

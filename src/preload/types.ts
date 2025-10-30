@@ -31,6 +31,7 @@ export interface ElectronAPI {
   getVideoBlobUrl: (filePath: string) => Promise<{ success: boolean; buffer?: Buffer; error?: string }>;
   getDesktopSources: () => Promise<DesktopSource[]>;
   saveRecording: (blob: Blob, duration: number) => Promise<string>;
+  generateSubtitles: (clips: unknown[], timelineDuration: number) => Promise<{ success: boolean; subtitlePath?: string; error?: string }>;
 }
 
 export {};
