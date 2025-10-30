@@ -164,6 +164,14 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const durationRef = useRef<number>(0);
   
+  // PiP recording refs
+  const pipCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pipScreenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pipWebcamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pipAnimationFrameRef = useRef<number | null>(null);
+  const pipScreenStreamRef = useRef<MediaStream | null>(null);
+  const pipWebcamStreamRef = useRef<MediaStream | null>(null);
+  
   /**
    * Request recording permissions based on mode
    */
@@ -578,7 +586,10 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           }
         }
       } else {
-        // PiP mode (screen + webcam)
+        // PiP mode (screen + webcam) - use canvas compositing
+        console.log('[Recording] Starting PiP recording with canvas compositing');
+        
+        // Get screen stream
         const screenConstraints = {
           audio: false,
           video: {
@@ -593,54 +604,128 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           },
         } as any;
         
+        let screenStream: MediaStream;
         try {
-          stream = await (navigator.mediaDevices.getUserMedia as any)(screenConstraints);
+          screenStream = await (navigator.mediaDevices.getUserMedia as any)(screenConstraints);
         } catch (error) {
           console.error('Screen capture failed for PiP, trying alternative method:', error);
-          stream = await navigator.mediaDevices.getDisplayMedia({
+          screenStream = await navigator.mediaDevices.getDisplayMedia({
             video: { width: { ideal: 1920 }, height: { ideal: 1080 } } as any,
             audio: false as any,
           });
         }
+        pipScreenStreamRef.current = screenStream;
         
-        // Try to add webcam with device selection
+        // Get webcam stream
+        const webcamVideoConstraints: MediaTrackConstraints = {
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+        };
+        
+        if (recording.selectedVideoDeviceId) {
+          webcamVideoConstraints.deviceId = { exact: recording.selectedVideoDeviceId };
+        }
+        
+        const webcamAudioConstraints: MediaTrackConstraints | boolean = recording.audioEnabled
+          ? (recording.selectedAudioDeviceId 
+              ? { deviceId: { exact: recording.selectedAudioDeviceId } }
+              : true)
+          : false;
+        
+        let webcamStream: MediaStream;
         try {
-          const webcamVideoConstraints: MediaTrackConstraints = {
-            width: { ideal: 320 },
-            height: { ideal: 240 },
-          };
-          
-          // Use selected video device if available
-          if (recording.selectedVideoDeviceId) {
-            webcamVideoConstraints.deviceId = { exact: recording.selectedVideoDeviceId };
-          }
-          
-          const webcamAudioConstraints: MediaTrackConstraints | boolean = recording.audioEnabled
-            ? (recording.selectedAudioDeviceId 
-                ? { deviceId: { exact: recording.selectedAudioDeviceId } }
-                : true)
-            : false;
-          
-          const webcamStream = await navigator.mediaDevices.getUserMedia({
+          webcamStream = await navigator.mediaDevices.getUserMedia({
             video: webcamVideoConstraints,
             audio: webcamAudioConstraints,
           });
-          webcamStream.getTracks().forEach(track => stream.addTrack(track));
+          pipWebcamStreamRef.current = webcamStream;
         } catch (webcamError) {
-          console.warn('Webcam capture failed for PiP, continuing with screen only:', webcamError);
-          // Add audio if enabled and webcam didn't provide it
-          if (recording.audioEnabled) {
-            try {
-              const audioConstraints: MediaTrackConstraints | boolean = recording.selectedAudioDeviceId
-                ? { deviceId: { exact: recording.selectedAudioDeviceId } }
-                : true;
-              const audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-              audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
-            } catch (audioError) {
-              console.warn('Audio capture failed:', audioError);
-            }
-          }
+          console.error('Webcam capture failed for PiP:', webcamError);
+          throw new Error('PiP mode requires both screen and webcam access');
         }
+        
+        // Create canvas for compositing
+        const canvas = document.createElement('canvas');
+        canvas.width = 1280;
+        canvas.height = 720;
+        pipCanvasRef.current = canvas;
+        
+        // Create video elements
+        const screenVideo = document.createElement('video');
+        screenVideo.srcObject = screenStream;
+        screenVideo.autoplay = true;
+        screenVideo.muted = true;
+        pipScreenVideoRef.current = screenVideo;
+        
+        const webcamVideo = document.createElement('video');
+        webcamVideo.srcObject = webcamStream;
+        webcamVideo.autoplay = true;
+        webcamVideo.muted = true;
+        pipWebcamVideoRef.current = webcamVideo;
+        
+        // Wait for videos to be ready
+        await Promise.all([
+          new Promise<void>(resolve => {
+            screenVideo.onloadedmetadata = () => {
+              screenVideo.play().then(() => resolve());
+            };
+          }),
+          new Promise<void>(resolve => {
+            webcamVideo.onloadedmetadata = () => {
+              webcamVideo.play().then(() => resolve());
+            };
+          }),
+        ]);
+        
+        // Start canvas drawing
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
+        }
+        
+        const drawFrame = () => {
+          if (!pipCanvasRef.current || !pipScreenVideoRef.current || !pipWebcamVideoRef.current) {
+            return;
+          }
+          
+          // Draw screen
+          if (pipScreenVideoRef.current.readyState >= 2) {
+            ctx.drawImage(pipScreenVideoRef.current, 0, 0, canvas.width, canvas.height);
+          }
+          
+          // Draw webcam overlay (top-left corner)
+          if (pipWebcamVideoRef.current.readyState >= 2) {
+            const pipWidth = 320;
+            const pipHeight = 240;
+            const margin = 20;
+            const x = margin;
+            const y = margin;
+            
+            // Draw border
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x - 2, y - 2, pipWidth + 4, pipHeight + 4);
+            
+            // Draw webcam
+            ctx.drawImage(pipWebcamVideoRef.current, x, y, pipWidth, pipHeight);
+          }
+          
+          pipAnimationFrameRef.current = requestAnimationFrame(drawFrame);
+        };
+        
+        // Start drawing
+        drawFrame();
+        
+        // Capture canvas stream
+        const canvasStream = canvas.captureStream(30); // 30 FPS
+        
+        // Add audio tracks from webcam
+        if (recording.audioEnabled) {
+          const audioTracks = webcamStream.getAudioTracks();
+          audioTracks.forEach(track => canvasStream.addTrack(track));
+        }
+        
+        stream = canvasStream;
       }
       
       streamRef.current = stream;
@@ -683,7 +768,7 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       }));
       throw error;
     }
-  }, [recording.selectedSourceId, recording.audioEnabled]);
+  }, [recording.selectedSourceId, recording.audioEnabled, recording.selectedVideoDeviceId, recording.selectedAudioDeviceId]);
   
   /**
    * Stop recording and return file path
@@ -706,6 +791,27 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
+        
+        // Stop PiP canvas drawing
+        if (pipAnimationFrameRef.current) {
+          cancelAnimationFrame(pipAnimationFrameRef.current);
+          pipAnimationFrameRef.current = null;
+        }
+        
+        // Stop PiP streams
+        if (pipScreenStreamRef.current) {
+          pipScreenStreamRef.current.getTracks().forEach(track => track.stop());
+          pipScreenStreamRef.current = null;
+        }
+        if (pipWebcamStreamRef.current) {
+          pipWebcamStreamRef.current.getTracks().forEach(track => track.stop());
+          pipWebcamStreamRef.current = null;
+        }
+        
+        // Clean up PiP elements
+        pipCanvasRef.current = null;
+        pipScreenVideoRef.current = null;
+        pipWebcamVideoRef.current = null;
         
         // Stop all tracks
         if (streamRef.current) {
@@ -759,6 +865,27 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    
+    // Stop PiP canvas drawing
+    if (pipAnimationFrameRef.current) {
+      cancelAnimationFrame(pipAnimationFrameRef.current);
+      pipAnimationFrameRef.current = null;
+    }
+    
+    // Stop PiP streams
+    if (pipScreenStreamRef.current) {
+      pipScreenStreamRef.current.getTracks().forEach(track => track.stop());
+      pipScreenStreamRef.current = null;
+    }
+    if (pipWebcamStreamRef.current) {
+      pipWebcamStreamRef.current.getTracks().forEach(track => track.stop());
+      pipWebcamStreamRef.current = null;
+    }
+    
+    // Clean up PiP elements
+    pipCanvasRef.current = null;
+    pipScreenVideoRef.current = null;
+    pipWebcamVideoRef.current = null;
     
     // Reset duration ref
     durationRef.current = 0;
