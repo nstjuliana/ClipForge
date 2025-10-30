@@ -48,7 +48,7 @@ export function LaunchScreen({ onNavigate }: LaunchScreenProps) {
         </button>
 
         {/* Version info */}
-        <p className="mt-8 text-sm text-gray-500">Version 0.1.0 - Phase 0 MVP</p>
+        <p className="mt-8 text-sm text-gray-500">Version 1.0.0</p>
       </div>
     </div>
   );

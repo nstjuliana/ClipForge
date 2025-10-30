@@ -22,9 +22,9 @@ if (typeof globalThis.File === 'undefined') {
 
 // Load environment variables from .env file in project root
 // In development, this is the project root
-// In production, this is relative to the app executable
+// In production, this is in the unpacked resources folder
 const envPath = app.isPackaged 
-  ? path.join(process.resourcesPath, '.env')
+  ? path.join(process.resourcesPath, 'app.asar.unpacked', '.env')
   : path.join(__dirname, '../../.env');
 
 const envResult = dotenv.config({ path: envPath });
@@ -58,7 +58,7 @@ function setupMediaPermissions() {
   console.log('[Permissions] Setting up media permission handlers...');
   
   // Set up permission request handler for media devices
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     console.log(`[Permissions] Permission requested: ${permission}`, details);
     
     // Allow media permissions (camera, microphone)
@@ -80,16 +80,11 @@ function setupMediaPermissions() {
   });
 
   // Set up permission check handler
-  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
     console.log(`[Permissions] Permission check: ${permission} from ${requestingOrigin}`);
     
     if (permission === 'media') {
       console.log('[Permissions] Media permission check: GRANTED');
-      return true;
-    }
-    
-    if (permission === 'display-capture') {
-      console.log('[Permissions] Display capture permission check: GRANTED');
       return true;
     }
     

@@ -16,11 +16,13 @@ files:
   - dist-electron/**/*
   - package.json
   - node_modules/**/*
+  - .env
 
 # Unpack native executables from ASAR (required for ffmpeg)
 asarUnpack:
   - "**/node_modules/ffmpeg-static/**/*"
   - "**/node_modules/ffprobe-static/**/*"
+  - ".env"
 
 # File associations
 fileAssociations:

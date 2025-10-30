@@ -1,8 +1,8 @@
 /**
  * Pause Detection Service
  * 
- * Analyzes audio files to detect and report pauses using OpenAI's API.
- * Uses function calling to have the AI identify silence periods.
+ * Analyzes audio files to detect and report pauses using FFmpeg's silencedetect filter.
+ * This provides accurate detection of actual silence in the audio waveform.
  * 
  * @module main/services/pauseDetection
  */
@@ -10,6 +10,8 @@
 import OpenAI from 'openai';
 import fs from 'fs/promises';
 import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
 
 /**
  * Represents a pause interval in the audio
@@ -26,6 +28,88 @@ export interface PauseDetectionResult {
   success: boolean;
   pauses?: PauseInterval[];
   error?: string;
+}
+
+// Configure FFmpeg path
+if (ffmpegStatic) {
+  ffmpeg.setFfmpegPath(ffmpegStatic);
+}
+
+/**
+ * Detects silence/pauses in audio using FFmpeg's silencedetect filter
+ * 
+ * This method analyzes the actual audio waveform for silence, providing
+ * more accurate results than transcription-based methods.
+ * 
+ * @param audioPath - Path to the audio file
+ * @param minDuration - Minimum silence duration in seconds
+ * @param noiseThreshold - Noise threshold in dB (default: -30dB)
+ * @returns Promise resolving to pause detection result
+ */
+async function detectPausesWithFFmpeg(
+  audioPath: string,
+  minDuration: number = 0.5,
+  noiseThreshold: number = -30
+): Promise<PauseDetectionResult> {
+  return new Promise((resolve) => {
+    const pauses: PauseInterval[] = [];
+    let stderrOutput = '';
+
+    console.log(`[PauseDetection] Using FFmpeg silencedetect (threshold: ${noiseThreshold}dB, min: ${minDuration}s)`);
+
+    ffmpeg(audioPath)
+      .audioFilters(`silencedetect=noise=${noiseThreshold}dB:d=${minDuration}`)
+      .outputOptions(['-f', 'null'])
+      .on('stderr', (line: string) => {
+        stderrOutput += line + '\n';
+        
+        // Parse silence_start and silence_end from FFmpeg output
+        const silenceStart = line.match(/silence_start: ([\d.]+)/);
+        const silenceEnd = line.match(/silence_end: ([\d.]+)/);
+        
+        if (silenceStart) {
+          const startTime = parseFloat(silenceStart[1]);
+          console.log(`[PauseDetection] Silence started at: ${startTime.toFixed(3)}s`);
+        }
+        
+        if (silenceEnd) {
+          const endTime = parseFloat(silenceEnd[1]);
+          console.log(`[PauseDetection] Silence ended at: ${endTime.toFixed(3)}s`);
+        }
+      })
+      .on('end', () => {
+        // Parse all silence intervals from the stderr output
+        const silenceRegex = /silence_start: ([\d.]+)[\s\S]*?silence_end: ([\d.]+)/g;
+        let match;
+        
+        while ((match = silenceRegex.exec(stderrOutput)) !== null) {
+          const start = parseFloat(match[1]);
+          const end = parseFloat(match[2]);
+          const duration = end - start;
+          
+          if (duration >= minDuration) {
+            pauses.push({ start, end });
+            console.log(`[PauseDetection] Found pause: ${start.toFixed(3)}s - ${end.toFixed(3)}s (${duration.toFixed(3)}s)`);
+          }
+        }
+        
+        console.log(`[PauseDetection] FFmpeg detection complete. Found ${pauses.length} pause(s)`);
+        
+        resolve({
+          success: true,
+          pauses,
+        });
+      })
+      .on('error', (err: Error) => {
+        console.error('[PauseDetection] FFmpeg error:', err.message);
+        resolve({
+          success: false,
+          error: `FFmpeg silence detection failed: ${err.message}`,
+        });
+      })
+      .output('-')
+      .run();
+  });
 }
 
 /**
@@ -47,18 +131,43 @@ function getOpenAIClient(): OpenAI | null {
 }
 
 /**
- * Detects pauses in an audio file using OpenAI's API
+ * Detects pauses in an audio file
  * 
- * Uses function calling to have the AI analyze the audio and report
- * pause intervals that exceed the minimum duration threshold.
+ * Uses FFmpeg's silencedetect filter to analyze the actual audio waveform
+ * and find silence intervals that exceed the minimum duration threshold.
+ * 
+ * @param audioPath - Path to the audio file (mp3, wav, etc.)
+ * @param minDuration - Minimum pause duration in seconds to detect
+ * @param useFFmpeg - Use FFmpeg instead of OpenAI (default: true, faster and free)
+ * @returns Promise resolving to pause detection result
+ */
+export async function detectPauses(
+  audioPath: string,
+  minDuration: number = 0.5,
+  useFFmpeg: boolean = true
+): Promise<PauseDetectionResult> {
+  // Use FFmpeg by default (faster, more accurate, and free)
+  if (useFFmpeg) {
+    return detectPausesWithFFmpeg(audioPath, minDuration);
+  }
+  
+  // Fallback to OpenAI method (kept for compatibility)
+  return detectPausesWithOpenAI(audioPath, minDuration);
+}
+
+/**
+ * Detects pauses in an audio file using OpenAI's Whisper API (legacy method)
+ * 
+ * Uses word-level timestamps from transcription to identify gaps.
+ * Note: This is less accurate than FFmpeg's waveform analysis.
  * 
  * @param audioPath - Path to the audio file (mp3, wav, etc.)
  * @param minDuration - Minimum pause duration in seconds to detect
  * @returns Promise resolving to pause detection result
  */
-export async function detectPauses(
+async function detectPausesWithOpenAI(
   audioPath: string,
-  minDuration: number = 3
+  minDuration: number = 0.5
 ): Promise<PauseDetectionResult> {
   try {
     console.log('[PauseDetection] Starting pause detection for:', audioPath);

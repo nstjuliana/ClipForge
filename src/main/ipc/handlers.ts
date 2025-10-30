@@ -502,9 +502,9 @@ export function registerIPCHandlers(): void {
         };
       }
       
-      console.log('[PauseRemoval] Detecting pauses with AI...');
+      console.log('[PauseRemoval] Detecting pauses using FFmpeg silencedetect...');
       
-      // Detect pauses using OpenAI
+      // Detect pauses using FFmpeg (more accurate than AI transcription)
       const pauseResult = await detectPauses(audioPath, minPauseDuration);
       
       // Clean up audio file

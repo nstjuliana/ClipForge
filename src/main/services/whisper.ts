@@ -10,7 +10,6 @@
 import OpenAI from 'openai';
 import fs from 'fs/promises';
 import path from 'path';
-import { randomUUID } from 'crypto';
 
 /**
  * Result of subtitle generation
