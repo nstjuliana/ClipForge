@@ -360,7 +360,6 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         
         // Check if we've reached the end of the clip
         if (video.currentTime >= current.timelineClip.outPoint || video.ended) {
-          console.log('[Playback] Clip ended - video.currentTime:', video.currentTime, 'outPoint:', current.timelineClip.outPoint, 'ended:', video.ended, 'clip:', current.timelineClip.id);
           const clipEndTime = current.timelineClip.startTime + current.timelineClip.duration;
           
           // Jump to next clip instantly
@@ -372,30 +371,17 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
             // This ensures getCurrentClip() finds the new clip instead of the old one at the boundary
             newPosition = nextClip.timelineClip.startTime + 0.001;
             
+            // Pause current video to prevent it from continuing during transition
+            if (video) {
+              video.pause();
+            }
+            
             // Update ref immediately for next frame
             playheadRef.current = newPosition;
             updateProgressBarWidth(newPosition);
-            // Force state update to trigger video loading and seek
+            // Force state update to trigger video loading effect for gapless clips
             setPlayhead(newPosition);
-            
-            // On next frame, check the new clip and seek the video if needed
-            animationFrameRef.current = requestAnimationFrame(() => {
-              const newClip = getCurrentClip(newPosition);
-              if (newClip && video && video.readyState >= 2) {
-                const timeInNewClip = newPosition - newClip.timelineClip.startTime + newClip.timelineClip.inPoint;
-                console.log('[Transition] Seeking to:', timeInNewClip, 'in new clip:', newClip.timelineClip.id, 'inPoint:', newClip.timelineClip.inPoint, 'outPoint:', newClip.timelineClip.outPoint);
-                // Force seek to correct position in new clip
-                video.currentTime = timeInNewClip;
-                // Ensure video is playing
-                if (video.paused) {
-                  console.log('[Transition] Video was paused, starting playback');
-                  video.play().catch((err) => {
-                    console.error('[Transition] Failed to play:', err);
-                  });
-                }
-              }
-              updatePlayhead();
-            });
+            animationFrameRef.current = requestAnimationFrame(updatePlayhead);
             return;
           } else if (clipEndTime >= timeline.duration) {
             // End of timeline - stop
@@ -411,7 +397,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
             newPosition = clipEndTime;
           }
         } else {
-          // Still within clip - sync with videoPla
+          // Still within clip - sync with video
           newPosition = timelinePosition;
         }
       } else {
