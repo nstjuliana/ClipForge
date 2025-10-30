@@ -222,7 +222,7 @@ export function registerIPCHandlers(): void {
     try {
       const sources = await desktopCapturer.getSources({
         types: ['window', 'screen'],
-        thumbnailSize: { width: 150, height: 150 }
+        thumbnailSize: { width: 800, height: 600 }
       });
 
       return sources.map(source => ({
