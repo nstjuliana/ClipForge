@@ -49,6 +49,12 @@ export function RecordingPreview({
 
   // Screen mode preview
   if (mode === 'screen') {
+    console.log('[RecordingPreview] Screen mode rendering', { 
+      hasPreview, 
+      videoRefCurrent: !!videoRef?.current,
+      videoRefSrcObject: videoRef?.current?.srcObject ? 'has stream' : 'no stream'
+    });
+    
     return (
       <div className="text-center">
         {!isRecording && (
@@ -65,16 +71,16 @@ export function RecordingPreview({
               playsInline
               className="w-full h-full object-contain"
               onLoadedMetadata={(e) => {
-                console.log('[Screen Preview] Video metadata loaded');
+                console.log('[RecordingPreview Video] Metadata loaded, readyState:', e.currentTarget.readyState);
                 e.currentTarget.play().catch(err => {
-                  console.error('[Screen Preview] Failed to play after metadata loaded:', err);
+                  console.error('[RecordingPreview Video] Failed to play after metadata loaded:', err);
                 });
               }}
               onPlay={() => {
-                console.log('[Screen Preview] Video started playing');
+                console.log('[RecordingPreview Video] Video started playing');
               }}
               onError={(e) => {
-                console.error('[Screen Preview] Video error:', e);
+                console.error('[RecordingPreview Video] Video error:', e);
               }}
             />
           ) : (

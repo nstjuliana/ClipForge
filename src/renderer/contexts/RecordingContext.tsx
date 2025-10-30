@@ -117,6 +117,9 @@ interface RecordingContextValue {
   
   /** Set status message */
   setStatus: (message: string | null) => void;
+  
+  /** Reset recording state (clear selections, etc.) */
+  resetState: () => void;
 }
 
 /**
@@ -928,6 +931,17 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
     }));
   }, []);
   
+  /**
+   * Reset recording state
+   */
+  const resetState = useCallback(() => {
+    setRecording(prev => ({
+      ...prev,
+      selectedSourceId: null,
+      statusMessage: null,
+    }));
+  }, []);
+  
   // Memoize context value
   const value = useMemo(
     () => ({
@@ -943,6 +957,7 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       cancelRecording,
       toggleAudio,
       setStatus,
+      resetState,
     }),
     [
       recording,
@@ -957,6 +972,7 @@ export function RecordingProvider({ children }: RecordingProviderProps) {
       cancelRecording,
       toggleAudio,
       setStatus,
+      resetState,
     ]
   );
   

@@ -21,8 +21,15 @@ export function useScreenPreview({
 
   const startPreview = useCallback(async () => {
     try {
+      console.log('[useScreenPreview] startPreview called', { 
+        hasStream: !!streamRef.current, 
+        isRecording,
+        selectedSourceId 
+      });
+      
       // Don't stop if already recording (keep preview alive during recording)
       if (streamRef.current && !isRecording) {
+        console.log('[useScreenPreview] Stopping existing stream');
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
         setStream(null);
@@ -30,15 +37,16 @@ export function useScreenPreview({
 
       // If already have a preview stream and recording, keep using it
       if (streamRef.current && isRecording) {
+        console.log('[useScreenPreview] Keeping existing stream (recording)');
         return streamRef.current;
       }
 
       if (!selectedSourceId) {
-        console.log('[Screen Preview] No source selected');
+        console.log('[useScreenPreview] No source selected');
         return null;
       }
 
-      console.log('[Screen Preview] Starting preview for source:', selectedSourceId);
+      console.log('[useScreenPreview] Starting preview for source:', selectedSourceId);
 
       // Get screen stream
       const screenConstraints = {

@@ -21,8 +21,15 @@ export function useWebcamPreview({
 
   const startPreview = useCallback(async () => {
     try {
+      console.log('[useWebcamPreview] startPreview called', { 
+        hasStream: !!streamRef.current, 
+        isRecording,
+        selectedVideoDeviceId 
+      });
+      
       // Don't stop if already recording (keep preview alive during recording)
       if (streamRef.current && !isRecording) {
+        console.log('[useWebcamPreview] Stopping existing stream');
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
         setStream(null);
@@ -30,6 +37,7 @@ export function useWebcamPreview({
 
       // If already have a preview stream and recording, keep using it
       if (streamRef.current && isRecording) {
+        console.log('[useWebcamPreview] Keeping existing stream (recording)');
         return streamRef.current;
       }
 
@@ -43,22 +51,27 @@ export function useWebcamPreview({
         videoConstraints.deviceId = { exact: selectedVideoDeviceId };
       }
 
+      console.log('[useWebcamPreview] Requesting webcam with constraints:', videoConstraints);
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: false,
       });
 
+      console.log('[useWebcamPreview] Webcam stream obtained:', newStream.id);
       streamRef.current = newStream;
       setStream(newStream);
 
       // Set stream to video element
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
+        console.log('[useWebcamPreview] Stream attached to video element');
+      } else {
+        console.warn('[useWebcamPreview] Video ref not available');
       }
 
       return newStream;
     } catch (error) {
-      console.error('Failed to start webcam preview:', error);
+      console.error('[useWebcamPreview] Failed to start webcam preview:', error);
       return null;
     }
   }, [selectedVideoDeviceId, isRecording, videoRef]);
