@@ -34,7 +34,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   const { timeline, setPlayhead, setPlaying } = useTimeline();
   const { clips: mediaClips } = useMedia();
   const [isLoading, setIsLoading] = useState(false);
-  const [currentTimelineClipId, setCurrentTimelineClipId] = useState<string | null>(null);
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   // Mutable ref for smooth progress bar updates (updated every frame)
@@ -62,12 +62,13 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     }
   }, [timeline.playhead, timeline.isPlaying, timeline.duration]);
 
-  const getCurrentClip = useCallback(() => {
-    const playhead = timeline.playhead;
+  const getCurrentClip = useCallback((playheadPosition?: number) => {
+    // Use provided playhead or fall back to ref (for animation frame) or state (for effects)
+    const playhead = playheadPosition ?? playheadRef.current ?? timeline.playhead;
     
-    // Find all clips at playhead position
+    // Find all clips at playhead position - inclusive end for gapless clips
     const clipsAtPlayhead = timeline.clips.filter(tc => {
-      const isInRange = playhead >= tc.startTime && playhead < tc.startTime + tc.duration;
+      const isInRange = playhead >= tc.startTime && playhead <= tc.startTime + tc.duration;
       return isInRange;
     });
     
@@ -75,7 +76,11 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     
     // Sort by track index (ascending) - lower track index = higher priority (on top)
     // Track 1 (index 0) renders on top of Track 2 (index 1), etc.
-    clipsAtPlayhead.sort((a, b) => a.track - b.track);
+    // For clips on same track, later start time wins (for gapless transitions)
+    clipsAtPlayhead.sort((a, b) => {
+      if (a.track !== b.track) return a.track - b.track;
+      return b.startTime - a.startTime; // later start wins
+    });
     
     const timelineClip = clipsAtPlayhead[0]; // Get topmost track clip
     
@@ -85,16 +90,16 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     if (!clip) return null;
     
     return { clip, timelineClip };
-  }, [timeline.playhead, timeline.clips, mediaClips]);
+  }, [timeline.clips, mediaClips]);
 
   /**
    * Find the next clip after the given playhead position
    * If multiple clips start at the same time, returns the one from the topmost track
    */
   const getNextClip = useCallback((playhead: number) => {
-    // Find all clips that start after the playhead, then get the earliest one
+    // Find all clips that start at or after the playhead (>= for gapless clips)
     const futureClips = timeline.clips
-      .filter(tc => tc.startTime > playhead)
+      .filter(tc => tc.startTime >= playhead)
       .sort((a, b) => {
         // First sort by start time
         if (a.startTime !== b.startTime) {
@@ -115,41 +120,44 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   
   /**
    * Update video source when clip changes
-   * Tracks timelineClip.id to ensure reload when switching clips (even same file, different trim)
-   * Always revokes previous blob URL to prevent memory leaks
+   * Tracks file path to avoid reloading when switching between segments of the same file
+   * Only reloads when the actual source file changes
    */
   useEffect(() => {
     const current = getCurrentClip();
     
     if (!current) {
-      // Clean up old blob URL immediately
-      if (videoBlobUrl) {
-        URL.revokeObjectURL(videoBlobUrl);
+      // Clean up old blob URL immediately if we had one
+      if (currentFilePath !== null) {
+        if (videoBlobUrl) {
+          URL.revokeObjectURL(videoBlobUrl);
+        }
+        setVideoBlobUrl(null);
+        setCurrentFilePath(null);
       }
-      setVideoBlobUrl(null);
-      setCurrentTimelineClipId(null);
       return;
     }
     
-    const { timelineClip } = current;
+    const { clip } = current;
     
-    // Trigger reload if we're showing a *different timeline clip*
-    if (timelineClip.id !== currentTimelineClipId) {
-      // Revoke previous blob URL immediately on clip change
-      if (videoBlobUrl) {
+    // Only reload if we're showing a *different source file*
+    // This avoids reloading when switching between split segments of the same video
+    if (clip.filePath !== currentFilePath) {
+      // Revoke previous blob URL only when changing files
+      if (videoBlobUrl && currentFilePath !== null) {
         URL.revokeObjectURL(videoBlobUrl);
       }
       
       setIsLoading(true);
-      setCurrentTimelineClipId(timelineClip.id);
+      setCurrentFilePath(clip.filePath);
       
       // Always load via IPC for consistent behavior
       // This handles both real file paths and will error gracefully for invalid blob URLs
-      window.electron.getVideoBlobUrl(current.clip.filePath)
+      window.electron.getVideoBlobUrl(clip.filePath)
         .then((result: { success: boolean; buffer?: ArrayBuffer; error?: string }) => {
           if (!result.success || !result.buffer) {
             console.error('Failed to load video:', result.error);
-            console.error('Attempted to load path:', current.clip.filePath);
+            console.error('Attempted to load path:', clip.filePath);
             setVideoBlobUrl(null);
             setIsLoading(false);
             return;
@@ -164,12 +172,13 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         })
         .catch((err: unknown) => {
           console.error('Failed to load video:', err);
-          console.error('Attempted to load path:', current.clip.filePath);
+          console.error('Attempted to load path:', clip.filePath);
           setVideoBlobUrl(null);
           setIsLoading(false);
         });
     }
-  }, [getCurrentClip, currentTimelineClipId, videoBlobUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline.playhead, timeline.clips, mediaClips, currentFilePath]);
   
   /**
    * Cleanup blob URL on unmount - always revoke to prevent memory leaks
@@ -192,8 +201,9 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     const current = getCurrentClip();
     if (!current) return;
     
-    // Calculate time within the clip
-    const timeInClip = timeline.playhead - current.timelineClip.startTime + current.timelineClip.inPoint;
+    // Calculate time within the clip using ref for accuracy
+    const currentPlayhead = playheadRef.current;
+    const timeInClip = currentPlayhead - current.timelineClip.startTime + current.timelineClip.inPoint;
     
     // Update video time if significantly different (avoid constant seeking)
     if (Math.abs(video.currentTime - timeInClip) > 0.1) {
@@ -217,7 +227,8 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     const current = getCurrentClip();
     if (!video || !current || !videoBlobUrl) return;
     
-    const timeInClip = timeline.playhead - current.timelineClip.startTime + current.timelineClip.inPoint;
+    const currentPlayhead = playheadRef.current;
+    const timeInClip = currentPlayhead - current.timelineClip.startTime + current.timelineClip.inPoint;
     
     // If we're within the clip's in/out point range
     if (timeInClip >= current.timelineClip.inPoint && timeInClip <= current.timelineClip.outPoint) {
@@ -243,10 +254,11 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     // Seek to correct position
     const current = getCurrentClip();
     if (current && videoRef.current) {
-      const timeInClip = timeline.playhead - current.timelineClip.startTime + current.timelineClip.inPoint;
+      const currentPlayhead = playheadRef.current;
+      const timeInClip = currentPlayhead - current.timelineClip.startTime + current.timelineClip.inPoint;
       videoRef.current.currentTime = timeInClip;
     }
-  }, [getCurrentClip, timeline.playhead]);
+  }, [getCurrentClip]);
   
   /**
    * Handle play/pause
@@ -347,7 +359,8 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         const timelinePosition = current.timelineClip.startTime + (video.currentTime - current.timelineClip.inPoint);
         
         // Check if we've reached the end of the clip
-        if (video.currentTime >= current.timelineClip.outPoint) {
+        if (video.currentTime >= current.timelineClip.outPoint || video.ended) {
+          console.log('[Playback] Clip ended - video.currentTime:', video.currentTime, 'outPoint:', current.timelineClip.outPoint, 'ended:', video.ended, 'clip:', current.timelineClip.id);
           const clipEndTime = current.timelineClip.startTime + current.timelineClip.duration;
           
           // Jump to next clip instantly
@@ -355,7 +368,35 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
           
           if (nextClip) {
             // Jump directly to next clip start
-            newPosition = nextClip.timelineClip.startTime;
+            // Add tiny epsilon (0.001s) to move past the boundary when transitioning between tracks
+            // This ensures getCurrentClip() finds the new clip instead of the old one at the boundary
+            newPosition = nextClip.timelineClip.startTime + 0.001;
+            
+            // Update ref immediately for next frame
+            playheadRef.current = newPosition;
+            updateProgressBarWidth(newPosition);
+            // Force state update to trigger video loading and seek
+            setPlayhead(newPosition);
+            
+            // On next frame, check the new clip and seek the video if needed
+            animationFrameRef.current = requestAnimationFrame(() => {
+              const newClip = getCurrentClip(newPosition);
+              if (newClip && video && video.readyState >= 2) {
+                const timeInNewClip = newPosition - newClip.timelineClip.startTime + newClip.timelineClip.inPoint;
+                console.log('[Transition] Seeking to:', timeInNewClip, 'in new clip:', newClip.timelineClip.id, 'inPoint:', newClip.timelineClip.inPoint, 'outPoint:', newClip.timelineClip.outPoint);
+                // Force seek to correct position in new clip
+                video.currentTime = timeInNewClip;
+                // Ensure video is playing
+                if (video.paused) {
+                  console.log('[Transition] Video was paused, starting playback');
+                  video.play().catch((err) => {
+                    console.error('[Transition] Failed to play:', err);
+                  });
+                }
+              }
+              updatePlayhead();
+            });
+            return;
           } else if (clipEndTime >= timeline.duration) {
             // End of timeline - stop
             newPosition = timeline.duration;
@@ -370,7 +411,7 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
             newPosition = clipEndTime;
           }
         } else {
-          // Still within clip - sync with video
+          // Still within clip - sync with videoPla
           newPosition = timelinePosition;
         }
       } else {
@@ -381,7 +422,15 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
         if (nextClip) {
           // There's a next clip - jump to it if we've reached it
           if (newPosition >= nextClip.timelineClip.startTime) {
-            newPosition = nextClip.timelineClip.startTime;
+            // Add tiny epsilon to ensure we're inside the new clip
+            newPosition = nextClip.timelineClip.startTime + 0.001;
+            // Update ref immediately for next frame
+            playheadRef.current = newPosition;
+            updateProgressBarWidth(newPosition);
+            // Force state update when entering a clip from blank area
+            setPlayhead(newPosition);
+            animationFrameRef.current = requestAnimationFrame(updatePlayhead);
+            return;
           }
         } else if (newPosition >= timeline.duration) {
           // Reached end of timeline - stop

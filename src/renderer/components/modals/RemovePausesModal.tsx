@@ -33,6 +33,7 @@ type ProcessingStage = 'idle' | 'extracting' | 'analyzing' | 'cutting' | 'compre
  */
 export function RemovePausesModal({ isOpen, onClose }: RemovePausesModalProps) {
   const [minPauseDuration, setMinPauseDuration] = useState<number>(3);
+  const [padding, setPadding] = useState<number>(0.1);
   const [stage, setStage] = useState<ProcessingStage>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [pausesFound, setPausesFound] = useState<number>(0);
@@ -124,9 +125,17 @@ export function RemovePausesModal({ isOpen, onClose }: RemovePausesModalProps) {
       console.log(`[RemovePauses] Found ${pauses.length} pause(s), removing...`);
       setStage('cutting');
 
-      // Collect all unique split points
+      // Apply padding to pauses
+      const paddedPauses = pauses.map(pause => ({
+        start: pause.start + padding,
+        end: pause.end - padding,
+      })).filter(pause => pause.end > pause.start); // Filter out pauses that are too short after padding
+
+      console.log(`[RemovePauses] After applying ${padding}s padding: ${paddedPauses.length} pause(s) to remove`);
+
+      // Collect all unique split points (with padding applied)
       const splitPoints = new Set<number>();
-      pauses.forEach(pause => {
+      paddedPauses.forEach(pause => {
         splitPoints.add(pause.start);
         splitPoints.add(pause.end);
       });
@@ -141,8 +150,8 @@ export function RemovePausesModal({ isOpen, onClose }: RemovePausesModalProps) {
       
       console.log('[RemovePauses] Splits complete, removing pause clips...');
       
-      // Remove clips in each pause range
-      pauses.forEach(pause => {
+      // Remove clips in each pause range (with padding)
+      paddedPauses.forEach(pause => {
         console.log(`[RemovePauses] Removing clips in range: ${pause.start.toFixed(2)}s - ${pause.end.toFixed(2)}s`);
         removeClipsInRange(pause.start, pause.end);
       });
@@ -171,6 +180,7 @@ export function RemovePausesModal({ isOpen, onClose }: RemovePausesModalProps) {
     }
   }, [
     minPauseDuration,
+    padding,
     timeline.clips,
     timeline.duration,
     timeline.tracks.length,
@@ -226,20 +236,40 @@ export function RemovePausesModal({ isOpen, onClose }: RemovePausesModalProps) {
                 AI will analyze your timeline audio and automatically remove pauses longer than the specified duration.
               </p>
               
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Minimum Pause Duration (seconds)
-              </label>
-              <input
-                type="number"
-                value={minPauseDuration}
-                onChange={(e) => setMinPauseDuration(Math.max(0.5, parseFloat(e.target.value) || 0))}
-                min="0.5"
-                step="0.5"
-                className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-              />
-              <p className="text-gray-400 text-xs mt-1">
-                Pauses shorter than this will be kept
-              </p>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Minimum Pause Duration (seconds)
+                </label>
+                <input
+                  type="number"
+                  value={minPauseDuration}
+                  onChange={(e) => setMinPauseDuration(Math.max(0.5, parseFloat(e.target.value) || 0))}
+                  min="0.5"
+                  step="0.5"
+                  className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+                />
+                <p className="text-gray-400 text-xs mt-1">
+                  Pauses shorter than this will be kept
+                </p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Padding (seconds)
+                </label>
+                <input
+                  type="number"
+                  value={padding}
+                  onChange={(e) => setPadding(Math.max(0, parseFloat(e.target.value) || 0))}
+                  min="0"
+                  step="0.05"
+                  max="1"
+                  className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+                />
+                <p className="text-gray-400 text-xs mt-1">
+                  Keep this amount of time before and after each pause for smoother cuts
+                </p>
+              </div>
             </div>
 
             {timeline.clips.length === 0 && (
