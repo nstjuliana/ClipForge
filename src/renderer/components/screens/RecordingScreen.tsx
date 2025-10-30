@@ -127,7 +127,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
    * Handle source selection
    */
   const handleSourceSelect = useCallback((sourceId: string) => {
-    console.log('[Source Selection] Selecting source:', sourceId);
     selectSource(sourceId);
   }, [selectSource]);
   
@@ -186,7 +185,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // Don't restart if we already have a stream
     if (webcamPreview.stream) return;
     
-    console.log('[RecordingScreen] Starting webcam preview');
     const timer = setTimeout(() => {
       webcamPreview.startPreview();
     }, 100);
@@ -209,7 +207,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // Don't restart if we already have a stream
     if (screenPreview.stream) return;
     
-    console.log('[RecordingScreen] Starting screen preview for source:', recording.selectedSourceId);
     const timer = setTimeout(() => {
       screenPreview.startPreview();
     }, 300);
@@ -232,7 +229,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // Don't restart if we already have streams or are starting
     if (pipPreview.screenStream || pipPreview.webcamStream || pipPreview.isStarting) return;
     
-    console.log('[RecordingScreen] Starting PiP preview for source:', recording.selectedSourceId);
     const timer = setTimeout(() => {
       pipPreview.startPreview();
     }, 300);
@@ -254,7 +250,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // Webcam mode
     if (mode === 'webcam' && webcamPreview.stream && videoPreviewRef.current) {
       if (videoPreviewRef.current.srcObject !== webcamPreview.stream) {
-        console.log('[RecordingScreen] Attaching webcam stream to video element');
         videoPreviewRef.current.srcObject = webcamPreview.stream;
       }
     }
@@ -262,7 +257,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // Screen mode
     if (mode === 'screen' && screenPreview.stream && videoPreviewRef.current) {
       if (videoPreviewRef.current.srcObject !== screenPreview.stream) {
-        console.log('[RecordingScreen] Attaching screen stream to video element');
         videoPreviewRef.current.srcObject = screenPreview.stream;
       }
     }
@@ -270,7 +264,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // PiP mode - screen stream
     if (mode === 'pip' && pipPreview.screenStream && pipScreenVideoRef.current) {
       if (pipScreenVideoRef.current.srcObject !== pipPreview.screenStream) {
-        console.log('[RecordingScreen] Attaching PiP screen stream to video element');
         pipScreenVideoRef.current.srcObject = pipPreview.screenStream;
       }
     }
@@ -278,7 +271,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
     // PiP mode - webcam stream
     if (mode === 'pip' && pipPreview.webcamStream && pipWebcamVideoRef.current) {
       if (pipWebcamVideoRef.current.srcObject !== pipPreview.webcamStream) {
-        console.log('[RecordingScreen] Attaching PiP webcam stream to video element');
         pipWebcamVideoRef.current.srcObject = pipPreview.webcamStream;
       }
     }
@@ -343,13 +335,6 @@ export function RecordingScreen({ onClose, initialMode = 'screen' }: RecordingSc
             const hasPreviewValue = mode === 'webcam' ? !!webcamPreview.stream :
                                     mode === 'screen' ? !!screenPreview.stream :
                                     false;
-            console.log('[RecordingScreen] Rendering preview', { 
-              mode, 
-              hasPreview: hasPreviewValue,
-              webcamStream: !!webcamPreview.stream,
-              screenStream: !!screenPreview.stream,
-              shouldShowPreview 
-            });
             
             return (
               <RecordingPreview

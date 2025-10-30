@@ -65,27 +65,11 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
   const getCurrentClip = useCallback(() => {
     const playhead = timeline.playhead;
     
-    console.log('=== getCurrentClip Debug ===');
-    console.log('Playhead:', playhead);
-    console.log('Timeline clips count:', timeline.clips.length);
-    console.log('Timeline clips:', timeline.clips.map(tc => ({
-      id: tc.id,
-      clipId: tc.clipId,
-      startTime: tc.startTime,
-      duration: tc.duration,
-      endTime: tc.startTime + tc.duration,
-      track: tc.track
-    })));
-    console.log('Media clips count:', mediaClips.length);
-    
     // Find all clips at playhead position
     const clipsAtPlayhead = timeline.clips.filter(tc => {
       const isInRange = playhead >= tc.startTime && playhead < tc.startTime + tc.duration;
-      console.log(`Checking clip ${tc.id}: start=${tc.startTime}, end=${tc.startTime + tc.duration}, playhead=${playhead}, track=${tc.track}, inRange=${isInRange}`);
       return isInRange;
     });
-    
-    console.log('Found clips at playhead:', clipsAtPlayhead);
     
     if (clipsAtPlayhead.length === 0) return null;
     
@@ -94,11 +78,9 @@ export function PreviewPanel({ className = '' }: PreviewPanelProps) {
     clipsAtPlayhead.sort((a, b) => a.track - b.track);
     
     const timelineClip = clipsAtPlayhead[0]; // Get topmost track clip
-    console.log('Selected topmost clip:', timelineClip);
     
     // Get source clip
     const clip = mediaClips.find(c => c.id === timelineClip.clipId);
-    console.log('Found source clip:', clip);
     
     if (!clip) return null;
     
