@@ -33,6 +33,8 @@ export function usePipPreview({
   const animationFrameRef = useRef<number | null>(null);
   const pipPositionRef = useRef(pipPosition);
   const previewStartedForSourceRef = useRef<string | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const webcamStreamRef = useRef<MediaStream | null>(null);
 
   // Update position ref when prop changes
   useEffect(() => {
@@ -67,12 +69,14 @@ export function usePipPreview({
       animationFrameRef.current = null;
     }
 
-    if (screenStream) {
-      screenStream.getTracks().forEach(track => track.stop());
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(track => track.stop());
+      screenStreamRef.current = null;
       setScreenStream(null);
     }
-    if (webcamStream) {
-      webcamStream.getTracks().forEach(track => track.stop());
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach(track => track.stop());
+      webcamStreamRef.current = null;
       setWebcamStream(null);
     }
 
@@ -85,7 +89,7 @@ export function usePipPreview({
 
     // Reset preview tracking
     previewStartedForSourceRef.current = null;
-  }, [screenStream, webcamStream, screenVideoRef, webcamVideoRef]);
+  }, [screenVideoRef, webcamVideoRef]);
 
   const startPreview = useCallback(async () => {
     // Prevent multiple simultaneous starts
@@ -95,7 +99,7 @@ export function usePipPreview({
     }
 
     // Prevent starting preview for same source again
-    if (previewStartedForSourceRef.current === selectedSourceId && screenStream && webcamStream) {
+    if (previewStartedForSourceRef.current === selectedSourceId && screenStreamRef.current && webcamStreamRef.current) {
       console.log('[PiP Preview] Preview already started for this source, ignoring');
       return;
     }
@@ -144,6 +148,7 @@ export function usePipPreview({
         console.log('[PiP Preview] Screen stream obtained via getDisplayMedia');
       }
 
+      screenStreamRef.current = newScreenStream;
       setScreenStream(newScreenStream);
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = newScreenStream;
@@ -166,6 +171,7 @@ export function usePipPreview({
       });
 
       console.log('[PiP Preview] Webcam stream obtained');
+      webcamStreamRef.current = newWebcamStream;
       setWebcamStream(newWebcamStream);
       if (webcamVideoRef.current) {
         webcamVideoRef.current.srcObject = newWebcamStream;
@@ -178,13 +184,20 @@ export function usePipPreview({
       setIsStarting(false);
       alert(`Failed to start preview: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [selectedSourceId, selectedVideoDeviceId, stopPreview, screenStream, webcamStream, screenVideoRef, webcamVideoRef, isStarting]);
+  }, [selectedSourceId, selectedVideoDeviceId, stopPreview, screenVideoRef, webcamVideoRef, isStarting]);
 
   /**
    * Start canvas drawing when streams are ready
    */
   useEffect(() => {
+    console.log('[PiP Preview] Canvas drawing useEffect triggered', { 
+      hasScreenStream: !!screenStream, 
+      hasWebcamStream: !!webcamStream,
+      hasCanvas: !!canvasRef.current 
+    });
+    
     if (!screenStream || !webcamStream) {
+      console.log('[PiP Preview] Missing streams, not starting canvas drawing');
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
@@ -192,9 +205,11 @@ export function usePipPreview({
       return;
     }
 
+    console.log('[PiP Preview] Both streams available, starting canvas drawing');
     const startCanvasDrawing = () => {
       const canvas = canvasRef.current;
       if (!canvas) {
+        console.log('[PiP Preview] Canvas not ready, retrying...');
         setTimeout(startCanvasDrawing, 100);
         return;
       }
@@ -270,9 +285,17 @@ export function usePipPreview({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopPreview();
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (webcamStreamRef.current) {
+        webcamStreamRef.current.getTracks().forEach(track => track.stop());
+      }
     };
-  }, [stopPreview]);
+  }, []);
 
   return {
     screenStream,

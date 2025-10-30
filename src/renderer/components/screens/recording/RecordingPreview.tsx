@@ -213,14 +213,13 @@ export function RecordingPreview({
           </>
         )}
         <div className="relative inline-block mb-4">
-          {hasPipStreams ? (
-            <canvas
-              ref={canvasRef}
-              className="bg-gray-900 rounded-lg"
-              style={{ width: '854px', height: '480px', maxWidth: '100%', aspectRatio: '16/9' }}
-            />
-          ) : (
-            <div className="w-96 h-72 mx-auto bg-gray-800 rounded-lg flex items-center justify-center">
+          <canvas
+            ref={canvasRef}
+            className="bg-gray-900 rounded-lg"
+            style={{ width: '854px', height: '480px', maxWidth: '100%', aspectRatio: '16/9' }}
+          />
+          {!hasPipStreams && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-lg">
               <span className="text-6xl animate-pulse">⏳</span>
             </div>
           )}
