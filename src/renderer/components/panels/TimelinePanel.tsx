@@ -7,7 +7,7 @@
  * @component
  */
 
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { Stage, Layer, Rect } from 'react-konva';
 import { useTimeline } from '@/contexts/TimelineContext';
 import { useMedia } from '@/contexts/MediaContext';
@@ -22,6 +22,7 @@ import { TimelineRuler } from './timeline/TimelineRuler';
 import { TimelineClip } from './timeline/TimelineClip';
 import { TimelinePlayhead } from './timeline/TimelinePlayhead';
 import { TimelineTracks } from './timeline/TimelineTracks';
+import { RemovePausesModal } from '../modals/RemovePausesModal';
 import {
   TRACK_HEIGHT,
   TRACK_PADDING,
@@ -47,6 +48,8 @@ export interface TimelinePanelProps {
 export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   const timelineCanvasRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+  
+  const [isRemovePausesModalOpen, setIsRemovePausesModalOpen] = useState(false);
   
   const {
     timeline,
@@ -228,20 +231,23 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
   };
 
   return (
-    <div ref={containerRef} className={`flex flex-col h-full bg-gray-900 ${className}`}>
-      {/* Timeline Header */}
-      <TimelineHeader
-        onSplitClip={handleSplitClip}
-        clipAtPlayhead={!!clipAtPlayhead}
-        numTracks={NUM_TRACKS}
-        onAddTrack={addTrack}
-        onRemoveTrack={() => NUM_TRACKS > 1 && removeTrack(NUM_TRACKS - 1)}
-        zoom={timeline.zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-        onResetPlayhead={() => setPlayhead(0)}
-      />
+    <>
+      <div ref={containerRef} className={`flex flex-col h-full bg-gray-900 ${className}`}>
+        {/* Timeline Header */}
+        <TimelineHeader
+          onSplitClip={handleSplitClip}
+          clipAtPlayhead={!!clipAtPlayhead}
+          onRemovePauses={() => setIsRemovePausesModalOpen(true)}
+          hasClips={timeline.clips.length > 0}
+          numTracks={NUM_TRACKS}
+          onAddTrack={addTrack}
+          onRemoveTrack={() => NUM_TRACKS > 1 && removeTrack(NUM_TRACKS - 1)}
+          zoom={timeline.zoom}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
+          onResetPlayhead={() => setPlayhead(0)}
+        />
       
       {/* Timeline Canvas */}
       <div 
@@ -344,6 +350,13 @@ export function TimelinePanel({ className = '' }: TimelinePanelProps) {
           </Layer>
         </Stage>
       </div>
-    </div>
+      </div>
+      
+      {/* Remove Pauses Modal */}
+      <RemovePausesModal
+        isOpen={isRemovePausesModalOpen}
+        onClose={() => setIsRemovePausesModalOpen(false)}
+      />
+    </>
   );
 }

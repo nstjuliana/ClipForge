@@ -46,3 +46,20 @@ export interface TimelineClipData {
   track: number;
 }
 
+/**
+ * Pause interval in audio
+ */
+export interface PauseInterval {
+  start: number; // Start time in seconds
+  end: number;   // End time in seconds
+}
+
+/**
+ * Pause detection result
+ */
+export interface PauseDetectionResult {
+  success: boolean;
+  pauses?: PauseInterval[];
+  error?: string;
+}
+

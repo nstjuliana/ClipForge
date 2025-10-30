@@ -10,13 +10,14 @@ import { ipcMain, dialog, desktopCapturer } from 'electron';
 import { saveProject, loadProject } from '../services/projectIO';
 import { exportTimeline, extractTimelineAudio } from '../services/ffmpeg';
 import { generateSubtitles } from '../services/whisper';
+import { detectPauses } from '../services/pauseDetection';
 import fs from 'fs/promises';
 import path from 'path';
 import { app } from 'electron';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
-import type { TimelineClipData, SubtitleGenerationResult } from './types';
+import type { TimelineClipData, SubtitleGenerationResult, PauseDetectionResult } from './types';
 
 /**
  * Resolves a path that might be inside an ASAR archive to the unpacked location
@@ -463,6 +464,62 @@ export function registerIPCHandlers(): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
+
+  /**
+   * Handle pause detection and removal
+   * Extracts timeline audio and detects pauses using OpenAI API
+   * 
+   * @param _event - IPC event
+   * @param clips - Timeline clips with file paths and timing info
+   * @param timelineDuration - Total duration of timeline
+   * @param minPauseDuration - Minimum pause duration in seconds to detect
+   * @returns Result of pause detection with intervals
+   */
+  ipcMain.handle('pause:detect-and-remove', async (_event, clips: TimelineClipData[], timelineDuration: number, minPauseDuration: number): Promise<PauseDetectionResult> => {
+    try {
+      console.log('[PauseRemoval] Starting pause detection and removal...');
+      console.log('[PauseRemoval] Min pause duration:', minPauseDuration, 'seconds');
+      
+      // Create temp directory for audio file
+      const userDataPath = app.getPath('userData');
+      const tempDir = path.join(userDataPath, 'temp-pauses');
+      await fs.mkdir(tempDir, { recursive: true });
+      
+      const audioPath = path.join(tempDir, `timeline-audio-${Date.now()}.mp3`);
+      
+      console.log('[PauseRemoval] Extracting timeline audio...');
+      
+      // Extract audio from timeline
+      const audioResult = await extractTimelineAudio(clips, audioPath, timelineDuration);
+      
+      if (!audioResult.success) {
+        return {
+          success: false,
+          error: `Failed to extract audio: ${audioResult.error}`,
+        };
+      }
+      
+      console.log('[PauseRemoval] Detecting pauses with AI...');
+      
+      // Detect pauses using OpenAI
+      const pauseResult = await detectPauses(audioPath, minPauseDuration);
+      
+      // Clean up audio file
+      try {
+        await fs.unlink(audioPath);
+      } catch (err) {
+        console.warn('[PauseRemoval] Failed to cleanup audio file:', err);
+      }
+      
+      return pauseResult;
+    } catch (error) {
+      console.error('[PauseRemoval] Pause detection failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during pause detection',
       };
     }
   });

@@ -142,6 +142,17 @@ const electronAPI = {
   generateSubtitles: (clips: unknown[], timelineDuration: number): Promise<{ success: boolean; subtitlePath?: string; error?: string }> => {
     return ipcRenderer.invoke('subtitle:generate', clips, timelineDuration);
   },
+
+  /**
+   * Detects pauses in timeline audio using OpenAI API
+   * @param clips - Timeline clips with file paths and timing info
+   * @param timelineDuration - Total duration of timeline
+   * @param minPauseDuration - Minimum pause duration in seconds to detect
+   * @returns Promise resolving to pause detection result
+   */
+  detectPauses: (clips: unknown[], timelineDuration: number, minPauseDuration: number): Promise<{ success: boolean; pauses?: Array<{ start: number; end: number }>; error?: string }> => {
+    return ipcRenderer.invoke('pause:detect-and-remove', clips, timelineDuration, minPauseDuration);
+  },
 };
 
 /**

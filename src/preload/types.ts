@@ -32,6 +32,7 @@ export interface ElectronAPI {
   getDesktopSources: () => Promise<DesktopSource[]>;
   saveRecording: (blob: Blob, duration: number) => Promise<string>;
   generateSubtitles: (clips: unknown[], timelineDuration: number) => Promise<{ success: boolean; subtitlePath?: string; error?: string }>;
+  detectPauses: (clips: unknown[], timelineDuration: number, minPauseDuration: number) => Promise<{ success: boolean; pauses?: Array<{ start: number; end: number }>; error?: string }>;
 }
 
 export {};

@@ -16,6 +16,10 @@ export interface TimelineHeaderProps {
   onSplitClip: () => void;
   /** Whether playhead is over a clip (enables split button) */
   clipAtPlayhead: boolean;
+  /** Handler for remove pauses action */
+  onRemovePauses: () => void;
+  /** Whether there are clips on timeline (enables remove pauses button) */
+  hasClips: boolean;
   /** Number of tracks */
   numTracks: number;
   /** Handler for adding a track */
@@ -40,6 +44,8 @@ export interface TimelineHeaderProps {
 export function TimelineHeader({
   onSplitClip,
   clipAtPlayhead,
+  onRemovePauses,
+  hasClips,
   numTracks,
   onAddTrack,
   onRemoveTrack,
@@ -63,6 +69,14 @@ export function TimelineHeader({
           title={clipAtPlayhead ? 'Split clip at playhead' : 'Move playhead over a clip to split'}
         >
           ✂️ Split
+        </button>
+        <button
+          onClick={onRemovePauses}
+          disabled={!hasClips}
+          className="px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+          title={hasClips ? 'Remove pauses with AI' : 'Add clips to timeline first'}
+        >
+          🪄 Remove Pauses
         </button>
         <div className="flex items-center gap-1 border-l border-gray-700 pl-2">
           <button

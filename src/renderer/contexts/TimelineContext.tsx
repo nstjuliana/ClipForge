@@ -81,6 +81,12 @@ interface TimelineContextValue {
   
   /** End a drag operation (records undo state) */
   endDragOperation: () => void;
+  
+  /** Split all clips at a specific time */
+  splitClipsAtTime: (time: number) => void;
+  
+  /** Remove all clips within a time range */
+  removeClipsInRange: (startTime: number, endTime: number) => void;
 }
 
 /**
@@ -719,6 +725,102 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
     });
   }, []);
   
+  /**
+   * Split all clips at a specific time (without using playhead)
+   */
+  const splitClipsAtTime = useCallback((time: number) => {
+    setTimeline(prev => {
+      // Find all clips that intersect this time
+      const clipsToSplit = prev.clips.filter(clip => 
+        time > clip.startTime &&
+        time < clip.startTime + clip.duration
+      );
+      
+      if (clipsToSplit.length === 0) {
+        return prev;
+      }
+      
+      const clipsToRemove = new Set(clipsToSplit.map(c => c.id));
+      const newClips: TimelineClip[] = [];
+      
+      for (const clip of clipsToSplit) {
+        // Calculate split point relative to clip's start
+        const splitPoint = time - clip.startTime;
+        
+        // Ensure split point is within clip bounds (not at edges)
+        if (splitPoint <= 0.01 || splitPoint >= clip.duration - 0.01) {
+          continue;
+        }
+        
+        // Calculate new in/out points for both clips
+        const splitTimeInSource = clip.inPoint + splitPoint;
+        
+        // Create first clip (before split - left clip)
+        const firstClip: TimelineClip = {
+          ...clip,
+          id: generateTimelineClipId(),
+          duration: splitPoint,
+          outPoint: splitTimeInSource,
+        };
+        
+        // Create second clip (after split - right clip)
+        const secondClip: TimelineClip = {
+          ...clip,
+          id: generateTimelineClipId(),
+          startTime: clip.startTime + splitPoint,
+          duration: clip.duration - splitPoint,
+          inPoint: splitTimeInSource,
+        };
+        
+        newClips.push(firstClip, secondClip);
+      }
+      
+      // Remove original clips and add new split clips
+      const updatedClips = prev.clips
+        .filter(c => !clipsToRemove.has(c.id))
+        .concat(newClips)
+        .sort((a, b) => a.startTime - b.startTime);
+      
+      return {
+        ...prev,
+        clips: updatedClips,
+      };
+    });
+  }, [generateTimelineClipId]);
+  
+  /**
+   * Remove all clips within a time range
+   */
+  const removeClipsInRange = useCallback((startTime: number, endTime: number) => {
+    setTimeline(prev => {
+      const clipsToRemove = prev.clips.filter(clip => {
+        const clipStart = clip.startTime;
+        const clipEnd = clip.startTime + clip.duration;
+        const clipMid = (clipStart + clipEnd) / 2;
+        
+        // Remove clip if its midpoint is within the range
+        return clipMid >= startTime && clipMid <= endTime;
+      });
+      
+      console.log(`[Timeline] Removing ${clipsToRemove.length} clips in range ${startTime.toFixed(2)}s - ${endTime.toFixed(2)}s`);
+      
+      const clipsToRemoveIds = new Set(clipsToRemove.map(c => c.id));
+      const newClips = prev.clips.filter(c => !clipsToRemoveIds.has(c.id));
+      
+      // Recalculate total duration
+      const newDuration = newClips.length > 0
+        ? Math.max(...newClips.map(c => c.startTime + c.duration))
+        : 0;
+      
+      return {
+        ...prev,
+        clips: newClips,
+        duration: newDuration,
+        selectedClips: prev.selectedClips.filter(id => !clipsToRemoveIds.has(id)),
+      };
+    });
+  }, []);
+  
   // Memoize context value
   const value = useMemo(
     () => ({
@@ -743,6 +845,8 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       applySnapshot: applySnapshotToTimeline,
       startDragOperation,
       endDragOperation,
+      splitClipsAtTime,
+      removeClipsInRange,
     }),
     [
       timeline,
@@ -766,6 +870,8 @@ export function TimelineProvider({ children, initialTimeline }: TimelineProvider
       applySnapshotToTimeline,
       startDragOperation,
       endDragOperation,
+      splitClipsAtTime,
+      removeClipsInRange,
     ]
   );
   
