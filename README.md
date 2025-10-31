@@ -16,14 +16,27 @@ A production-grade desktop video editor built with Electron, React, and TypeScri
 - ✅ Project save/load functionality
 - ✅ Packaged as native app
 
+### Phase 2 - Core Features (Completed)
+- ✅ Screen recording (full screen or window selection)
+- ✅ Webcam recording with device selection
+- ✅ Picture-in-Picture (PiP) recording (screen + webcam simultaneously)
+- ✅ Split clips at playhead position
+- ✅ Multiple timeline tracks (support for layered clips)
+- ✅ Timeline zoom and pan controls
+- ✅ Advanced preview controls with scrubbing
+- ✅ Keyboard shortcuts for common operations
+- ✅ Undo/redo functionality
+- ✅ AI-powered pause removal feature
+
 ## Technology Stack
 
 - **Desktop Framework:** Electron.js with Node.js backend
 - **Frontend:** React 18 + TypeScript
 - **Styling:** Tailwind CSS
-- **Media Processing:** @ffmpeg/ffmpeg (WASM) for video export
+- **Media Processing:** fluent-ffmpeg with ffmpeg-static for video export and processing
 - **Timeline UI:** Konva.js for canvas-based timeline rendering
 - **State Management:** React Context API
+- **Drag & Drop:** @dnd-kit/core for enhanced drag interactions
 
 ## Prerequisites
 
@@ -75,16 +88,33 @@ Built applications will be in the `out/` directory.
 2. Supported formats: MP4, MOV, WebM, AVI, MKV
 3. Thumbnails and metadata are automatically generated
 
+### Recording
+1. Click "Record" to open the Recording Studio
+2. Choose recording mode:
+   - **Screen:** Record your screen or a specific window
+   - **Webcam:** Record from your camera
+   - **Picture-in-Picture:** Record screen and webcam simultaneously
+3. Select your recording source (screen/window or camera device)
+4. Toggle audio recording on/off
+5. Click "Start Recording" to begin
+6. Click "Stop Recording" when finished - recording is automatically added to timeline
+
 ### Edit on Timeline
 1. Double-click a clip in the Media Library to add it to the timeline
 2. Drag clips on the timeline to reposition them
 3. Use the trim handles (white bars on clip edges) to adjust in/out points
 4. Click anywhere on the timeline to move the playhead
+5. Use the **Split** button (✂️) or press `S` to split clips at the playhead
+6. Place clips on different tracks for layered compositions
+7. Use zoom controls (+/-) or Ctrl/Cmd + mouse wheel to zoom the timeline
+8. Scroll horizontally to pan through long timelines
 
 ### Preview
-1. Use the play/pause button to preview your timeline
+1. Use the play/pause button or press `Spacebar` to preview your timeline
 2. Click on the timeline to scrub to a specific position
 3. Preview shows the current frame at the playhead position
+4. Use arrow keys to move playhead frame-by-frame
+5. Press `Home` to jump to start, `End` to jump to end
 
 ### Export
 1. Click the "Export" button in the top bar
@@ -97,6 +127,18 @@ Built applications will be in the `out/` directory.
 1. Click "Save" to save your current project
 2. Projects are saved as `.clipforge` files
 3. Reopen projects from the Project Selection screen
+
+### Keyboard Shortcuts
+- **Spacebar:** Play/pause preview
+- **S:** Split clip(s) at playhead
+- **Ctrl+S / Cmd+S:** Split all clips at playhead across all tracks
+- **Arrow Keys:** Move playhead left/right
+- **Home:** Jump to timeline start
+- **End:** Jump to timeline end
+- **Ctrl+Z / Cmd+Z:** Undo
+- **Ctrl+Y / Cmd+Y:** Redo
+- **Ctrl+Wheel / Cmd+Wheel:** Zoom timeline in/out
+- **Wheel:** Pan timeline horizontally
 
 ## Project Structure
 
@@ -126,9 +168,10 @@ ClipForge/
 - **services/projectIO.ts:** Reads and writes project files to disk
 
 ### Renderer Process
-- **Contexts:** State management for Media, Timeline, and Project
-- **Services:** Business logic for media import, FFmpeg export, thumbnails
+- **Contexts:** State management for Media, Timeline, Project, Recording, and Undo/Redo
+- **Services:** Business logic for media import, FFmpeg export, thumbnails, pause detection
 - **Components:** UI components for panels, modals, and screens
+- **Hooks:** Custom hooks for timeline operations, recording, keyboard shortcuts, and zoom
 
 ### Security
 - Context isolation enabled
@@ -137,9 +180,11 @@ ClipForge/
 
 ## Common Issues
 
-### FFmpeg Loading
-- FFmpeg WASM loads on first export (may take 10-20 seconds)
-- Progress indicator shows loading status
+### Recording Permissions
+- Screen recording requires system permissions (automatically requested)
+- Webcam/microphone access requires browser permissions
+- On Windows, check Settings > Privacy > Microphone if audio recording fails
+- Permissions are requested when starting a recording session
 
 ### Video Format Support
 - Browser-based video decoding depends on system codecs
@@ -157,17 +202,13 @@ ClipForge/
 
 ## Roadmap
 
-### Phase 2 - Core Features (Planned)
-- Screen and webcam recording
-- Split clips at playhead
-- Multiple timeline tracks
-- Audio controls
-
 ### Phase 3 - Polish (Planned)
-- Text overlays
+- Text overlays and graphics
 - Transitions and effects
-- Keyboard shortcuts
-- Auto-save
+- Audio controls (volume, fade in/out)
+- Auto-save functionality
+- Export presets for different platforms
+- Enhanced visual design improvements
 
 ## Contributing
 
@@ -182,6 +223,7 @@ MIT
 Built with:
 - [Electron](https://www.electronjs.org/)
 - [React](https://react.dev/)
-- [FFmpeg.wasm](https://ffmpegwasm.netlify.app/)
+- [fluent-ffmpeg](https://github.com/fluent-ffmpeg/node-fluent-ffmpeg)
 - [Konva](https://konvajs.org/)
 - [Tailwind CSS](https://tailwindcss.com/)
+- [@dnd-kit](https://dndkit.com/)
